@@ -55,6 +55,9 @@ func normalizeBlock(provider Provider, raw map[string]any, includeRaw bool) Norm
 	if token := firstString(raw, "file_token", "image_token", "token"); token != "" {
 		attrs["token"] = token
 	}
+	if hasChildren(raw) {
+		attrs["hasChildren"] = true
+	}
 	if len(attrs) == 0 {
 		attrs = nil
 	}
@@ -64,6 +67,19 @@ func normalizeBlock(provider Provider, raw map[string]any, includeRaw bool) Norm
 		source.Raw = raw
 	}
 	return NormalizedBlock{ID: id, Type: typ, Text: text, Attrs: attrs, Source: source}
+}
+
+func hasChildren(raw map[string]any) bool {
+	if boolValue(raw["has_children"]) || boolValue(raw["hasChildren"]) {
+		return true
+	}
+	if children, ok := raw["children"].([]any); ok && len(children) > 0 {
+		return true
+	}
+	if ids, ok := raw["children_ids"].([]any); ok && len(ids) > 0 {
+		return true
+	}
+	return false
 }
 
 func blockType(raw map[string]any) string {
@@ -130,6 +146,7 @@ func collectText(value any, parts *[]string, depth int) {
 		for _, key := range []string{"text", "content", "plain_text", "plainText"} {
 			if s, ok := v[key].(string); ok && s != "" {
 				*parts = append(*parts, s)
+				return
 			}
 		}
 		for _, child := range v {
