@@ -1,0 +1,15 @@
+# Go
+/bin/
+/dist/
+*.test
+coverage.out
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Editor
+.DS_Store
+.vscode/
+.idea/
