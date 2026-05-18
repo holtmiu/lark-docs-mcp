@@ -12,7 +12,7 @@ import (
 	"github.com/holtmiu/ChatGPT_MCP_Connectors/internal/mcp"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
