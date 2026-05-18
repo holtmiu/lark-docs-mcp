@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,6 +20,7 @@ type HTTPClient struct {
 	staticToken string
 	client      *http.Client
 	maxRetries  int
+	tokenMu     sync.Mutex
 	cachedToken string
 	tokenExpiry time.Time
 }
@@ -51,9 +53,14 @@ func (c *HTTPClient) TenantToken(ctx context.Context) (string, error) {
 	if c.staticToken != "" {
 		return c.staticToken, nil
 	}
+	c.tokenMu.Lock()
 	if c.cachedToken != "" && time.Now().Before(c.tokenExpiry.Add(-1*time.Minute)) {
-		return c.cachedToken, nil
+		token := c.cachedToken
+		c.tokenMu.Unlock()
+		return token, nil
 	}
+	c.tokenMu.Unlock()
+
 	if c.appID == "" || c.appSecret == "" {
 		return "", newError(ErrAuthRequired, "FEISHU_APP_ID/FEISHU_APP_SECRET or FEISHU_TENANT_ACCESS_TOKEN is required", nil)
 	}
@@ -71,13 +78,16 @@ func (c *HTTPClient) TenantToken(ctx context.Context) (string, error) {
 	if out.Code != 0 || out.TenantAccessToken == "" {
 		return "", newError(ErrAuthRequired, fmt.Sprintf("failed to obtain tenant token: code=%d msg=%s", out.Code, out.Msg), nil)
 	}
-	c.cachedToken = out.TenantAccessToken
 	ttl := time.Duration(out.Expire) * time.Second
 	if ttl <= 0 {
 		ttl = 90 * time.Minute
 	}
+	c.tokenMu.Lock()
+	c.cachedToken = out.TenantAccessToken
 	c.tokenExpiry = time.Now().Add(ttl)
-	return c.cachedToken, nil
+	token := c.cachedToken
+	c.tokenMu.Unlock()
+	return token, nil
 }
 
 func (c *HTTPClient) GetJSON(ctx context.Context, path string, query url.Values, out any) error {
@@ -93,18 +103,17 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, query url.
 	if err != nil {
 		return newError(ErrInvalidInput, "failed to encode request body", err)
 	}
-
 	attempts := c.maxRetries + 1
 	if attempts <= 0 {
 		attempts = 1
 	}
-
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
-			time.Sleep(backoff(attempt))
+			if err := sleepWithContext(ctx, backoff(attempt)); err != nil {
+				return err
+			}
 		}
-
 		req, err := http.NewRequestWithContext(ctx, method, c.urlFor(path, query), bytes.NewReader(body))
 		if err != nil {
 			return newError(ErrInvalidInput, "failed to create HTTP request", err)
@@ -117,7 +126,6 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, query url.
 			}
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
-
 		resp, err := c.client.Do(req)
 		if err != nil {
 			lastErr = err
@@ -168,6 +176,11 @@ func decodeResponse(resp *http.Response, out any) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return newError(ErrUpstream, fmt.Sprintf("upstream returned HTTP %d: %s", resp.StatusCode, string(raw)), nil)
 	}
+	if len(raw) > 0 {
+		if err := checkBusinessCode(raw); err != nil {
+			return err
+		}
+	}
 	if out == nil || len(raw) == 0 {
 		return nil
 	}
@@ -175,6 +188,17 @@ func decodeResponse(resp *http.Response, out any) error {
 		return newError(ErrUpstream, "failed to decode upstream response", err)
 	}
 	return nil
+}
+
+func checkBusinessCode(raw []byte) error {
+	var envelope struct {
+		Code *int   `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Code == nil || *envelope.Code == 0 {
+		return nil
+	}
+	return newError(ErrUpstream, fmt.Sprintf("Feishu/Lark API returned code=%d msg=%s", *envelope.Code, envelope.Msg), nil)
 }
 
 func isRetryable(status int) bool {
@@ -190,4 +214,15 @@ func backoff(attempt int) time.Duration {
 		return 2 * time.Second
 	}
 	return d
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
