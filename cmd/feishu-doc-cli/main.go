@@ -33,13 +33,18 @@ func main() {
 		result, err = service.GetMetadata(ctx, input)
 	case "read":
 		result, err = service.ReadDocument(ctx, input, feishu.ReadOptions{Format: "both"})
-	case "append-dry-run":
-		dryRun := true
+	case "create":
 		markdown := ""
 		if len(os.Args) > 3 {
 			markdown = os.Args[3]
 		}
-		result, err = service.AppendDocument(ctx, input, feishu.AppendRequest{Markdown: markdown, DryRun: &dryRun})
+		result, err = service.CreateDocument(ctx, feishu.CreateDocumentRequest{Title: input, Markdown: markdown})
+	case "append":
+		markdown := ""
+		if len(os.Args) > 3 {
+			markdown = os.Args[3]
+		}
+		result, err = service.AppendDocument(ctx, input, feishu.AppendRequest{Markdown: markdown})
 	default:
 		usage()
 		os.Exit(2)
@@ -54,5 +59,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: feishu-doc-cli <resolve|metadata|read|append-dry-run> <url-or-token> [markdown]")
+	fmt.Fprintln(os.Stderr, "usage: feishu-doc-cli <resolve|metadata|read|create|append> <url-or-token-or-title> [markdown]")
 }
