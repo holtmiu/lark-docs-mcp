@@ -23,6 +23,7 @@ func (t FeishuTools) Tools() []Tool {
 	boolProp := map[string]any{"type": "boolean"}
 	intProp := map[string]any{"type": "integer", "minimum": 1}
 	formatProp := map[string]any{"type": "string", "enum": []string{"json", "markdown", "both"}}
+	inputProp := map[string]any{"type": "string", "maxLength": 2048}
 	return []Tool{
 		{
 			Name:        "feishu_oauth_auth_url",
@@ -38,6 +39,11 @@ func (t FeishuTools) Tools() []Tool {
 			Name:        "feishu_doc_get_metadata",
 			Description: "Get metadata for a Feishu/Lark docx document using the configured Feishu/Lark app credentials.",
 			InputSchema: objectSchema(map[string]any{"input": stringProp, "credentialId": credentialIDProp}, []string{"input"}),
+		},
+		{
+			Name:        "feishu_doc_check_permission",
+			Description: "Safely preflight read/write/comment capability for a Feishu/Lark document before reading, writing, or commenting.",
+			InputSchema: objectSchema(map[string]any{"input": inputProp, "credentialId": credentialIDProp}, []string{"input"}),
 		},
 		{
 			Name:        "feishu_doc_read",
@@ -103,6 +109,21 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 			return nil, err
 		}
 		return t.Service.GetMetadataWithActor(ctx, req.Input, feishu.ActorContext{CredentialID: req.CredentialID})
+	case "feishu_doc_check_permission":
+		var req struct {
+			Input        string `json:"input"`
+			CredentialID string `json:"credentialId,omitempty"`
+		}
+		if err := decodeArgs(args, &req); err != nil {
+			return nil, err
+		}
+		if len(req.Input) > 2048 {
+			return nil, fmt.Errorf("input exceeds max length 2048")
+		}
+		if err := validateCredentialID(req.CredentialID); err != nil {
+			return nil, err
+		}
+		return t.Service.CheckPermissionWithActor(ctx, req.Input, feishu.ActorContext{CredentialID: req.CredentialID})
 	case "feishu_doc_read":
 		var req struct {
 			Input                 string `json:"input"`

@@ -59,11 +59,13 @@ type DocumentIdentity struct {
 }
 
 type PermissionSnapshot struct {
-	CanRead    bool   `json:"canRead"`
-	CanWrite   bool   `json:"canWrite"`
-	CanComment bool   `json:"canComment,omitempty"`
-	Visibility string `json:"visibility,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	CanRead         bool     `json:"canRead"`
+	CanWrite        bool     `json:"canWrite"`
+	CanComment      bool     `json:"canComment,omitempty"`
+	Visibility      string   `json:"visibility,omitempty"`
+	Reason          string   `json:"reason,omitempty"`
+	RequiredScopes  []string `json:"requiredScopes,omitempty"`
+	SuggestedAction string   `json:"suggestedAction,omitempty"`
 }
 
 type DocumentMetadata struct {

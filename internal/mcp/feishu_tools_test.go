@@ -3,10 +3,13 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/holtmiu/ChatGPT_MCP_Connectors/internal/config"
 	"github.com/holtmiu/ChatGPT_MCP_Connectors/internal/feishu"
@@ -20,6 +23,61 @@ func TestToolsIncludesOAuthAuthURL(t *testing.T) {
 		}
 	}
 	t.Fatalf("feishu_oauth_auth_url not found in tools: %#v", tools)
+}
+
+func TestToolsIncludesCheckPermission(t *testing.T) {
+	tool := toolByName(t, "feishu_doc_check_permission")
+	props := tool.InputSchema["properties"].(map[string]any)
+	input := props["input"].(map[string]any)
+	if got := input["maxLength"]; got != 2048 {
+		t.Fatalf("input maxLength = %#v, want 2048", got)
+	}
+	credentialID := props["credentialId"].(map[string]any)
+	if got := credentialID["maxLength"]; got != 128 {
+		t.Fatalf("credentialId maxLength = %#v, want 128", got)
+	}
+	if got := tool.InputSchema["additionalProperties"]; got != false {
+		t.Fatalf("additionalProperties = %#v, want false", got)
+	}
+}
+
+func TestCheckPermissionCallMapsInputAndCredentialIDToService(t *testing.T) {
+	var gotPath string
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"can_read": true, "can_write": true, "can_comment": true}})
+	}))
+	defer server.Close()
+
+	svc := feishu.NewService(config.Config{
+		Provider:                   "feishu",
+		BaseURL:                    server.URL,
+		DocxPermissionPathTemplate: "/permission/%s",
+		APITimeout:                 5 * time.Second,
+		APIMaxRetries:              0,
+	})
+	svc.SetTokenSource(testActorTokenSource{tokens: map[string]string{"cred-1": "user-token"}})
+	tools := FeishuTools{Service: svc}
+
+	got, err := tools.CallTool(context.Background(), "feishu_doc_check_permission", json.RawMessage([]byte(`{"input":"doc-token","credentialId":"cred-1"}`)))
+	if err != nil {
+		t.Fatalf("CallTool returned error: %v", err)
+	}
+	snapshot, ok := got.(feishu.PermissionSnapshot)
+	if !ok {
+		t.Fatalf("result type = %T, want PermissionSnapshot", got)
+	}
+	if !snapshot.CanRead || !snapshot.CanWrite || !snapshot.CanComment {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	if gotPath != "/permission/doc-token" {
+		t.Fatalf("path = %q, want resolved input token in permission path", gotPath)
+	}
+	if gotAuth != "Bearer user-token" {
+		t.Fatalf("Authorization = %q, want Bearer user-token", gotAuth)
+	}
 }
 
 func TestOAuthAuthURLCallReturnsResult(t *testing.T) {
@@ -248,4 +306,15 @@ func toolByName(t *testing.T, name string) *Tool {
 	}
 	t.Fatalf("%s not found", name)
 	return nil
+}
+
+type testActorTokenSource struct {
+	tokens map[string]string
+}
+
+func (s testActorTokenSource) Token(ctx context.Context, actor feishu.ActorContext) (string, string, error) {
+	if token := s.tokens[actor.CredentialID]; token != "" {
+		return token, "user", nil
+	}
+	return "tenant-token", "tenant", nil
 }

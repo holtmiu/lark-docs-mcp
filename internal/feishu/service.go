@@ -42,6 +42,10 @@ func NewService(cfg config.Config) *Service {
 	}
 }
 
+func (s *Service) SetTokenSource(source TokenSource) {
+	s.client.SetTokenSource(source)
+}
+
 func newConfiguredTokenStore(cfg config.Config) (TokenStore, error) {
 	if strings.TrimSpace(cfg.TokenStorePath) == "" {
 		return nil, nil
@@ -148,6 +152,15 @@ func (s *Service) CreateDocumentWithActor(ctx context.Context, req CreateDocumen
 		result.Warnings = append(result.Warnings, "dry-run only: no document was created")
 		return result, nil
 	}
+	if strings.TrimSpace(req.FolderToken) != "" {
+		folderPermission, err := s.CheckPermissionByIdentityWithActor(ctx, DocumentIdentity{Provider: Provider(s.cfg.Provider), ResourceType: ResourceDriveFile, Token: req.FolderToken}, actor)
+		if err != nil {
+			return DocumentWriteResult{}, err
+		}
+		if !folderPermission.CanWrite {
+			return DocumentWriteResult{}, permissionDeniedError("create document in target folder", folderPermission)
+		}
+	}
 
 	var raw map[string]any
 	if err := s.client.PostJSONWithActor(ctx, s.cfg.DocxCreatePath, body, &raw, actor); err != nil {
@@ -204,6 +217,13 @@ func (s *Service) AppendDocumentWithActor(ctx context.Context, input string, req
 	if dryRun {
 		result.Warnings = append(result.Warnings, "dry-run only: no content was written to Feishu/Lark")
 		return result, nil
+	}
+	permission, err := s.CheckPermissionByIdentityWithActor(ctx, identity, actor)
+	if err != nil {
+		return result, err
+	}
+	if !permission.CanWrite {
+		return result, permissionDeniedError("append document", permission)
 	}
 
 	path := fmt.Sprintf(s.cfg.DocxAppendChildrenPathTemplate, url.PathEscape(identity.Token), url.PathEscape(blockID))
