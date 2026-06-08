@@ -16,18 +16,41 @@ type Service struct {
 }
 
 func NewService(cfg config.Config) *Service {
+	client := NewHTTPClient(HTTPClientOptions{
+		BaseURL:           cfg.BaseURL,
+		AppID:             cfg.AppID,
+		AppSecret:         cfg.AppSecret,
+		TenantAccessToken: cfg.TenantAccessToken,
+		Provider:          Provider(cfg.Provider),
+		OAuthTokenPath:    cfg.OAuthTokenPath,
+		OAuthRefreshPath:  cfg.OAuthRefreshPath,
+		Timeout:           cfg.APITimeout,
+		MaxRetries:        cfg.APIMaxRetries,
+	})
+	var refresher *UserTokenRefresher
+	if store, err := newConfiguredTokenStore(cfg); err == nil && store != nil {
+		refresher = NewUserTokenRefresher(client, store)
+	}
+	client.SetTokenSource(UserFirstTokenSource{
+		Refresher: refresher,
+		Tenant:    TenantTokenSource{Client: client},
+	})
 	return &Service{
 		cfg:      cfg,
 		resolver: NewResolver(cfg.Provider),
-		client: NewHTTPClient(HTTPClientOptions{
-			BaseURL:           cfg.BaseURL,
-			AppID:             cfg.AppID,
-			AppSecret:         cfg.AppSecret,
-			TenantAccessToken: cfg.TenantAccessToken,
-			Timeout:           cfg.APITimeout,
-			MaxRetries:        cfg.APIMaxRetries,
-		}),
+		client:   client,
 	}
+}
+
+func newConfiguredTokenStore(cfg config.Config) (TokenStore, error) {
+	if strings.TrimSpace(cfg.TokenStorePath) == "" {
+		return nil, nil
+	}
+	key := []byte(cfg.TokenEncryptKey)
+	if len(key) != 0 && len(key) != 16 && len(key) != 24 && len(key) != 32 {
+		return nil, newError(ErrInvalidInput, "FEISHU_TOKEN_ENCRYPT_KEY must be 16, 24, or 32 bytes when configured", nil)
+	}
+	return NewFileTokenStore(cfg.TokenStorePath, key)
 }
 
 func (s *Service) Resolve(input string) (DocumentIdentity, error) {
@@ -35,21 +58,29 @@ func (s *Service) Resolve(input string) (DocumentIdentity, error) {
 }
 
 func (s *Service) GetMetadata(ctx context.Context, input string) (DocumentMetadata, error) {
+	return s.GetMetadataWithActor(ctx, input, ActorContext{})
+}
+
+func (s *Service) GetMetadataWithActor(ctx context.Context, input string, actor ActorContext) (DocumentMetadata, error) {
 	identity, err := s.Resolve(input)
 	if err != nil {
 		return DocumentMetadata{}, err
 	}
-	return s.GetMetadataByIdentity(ctx, identity)
+	return s.GetMetadataByIdentityWithActor(ctx, identity, actor)
 }
 
 func (s *Service) GetMetadataByIdentity(ctx context.Context, identity DocumentIdentity) (DocumentMetadata, error) {
+	return s.GetMetadataByIdentityWithActor(ctx, identity, ActorContext{})
+}
+
+func (s *Service) GetMetadataByIdentityWithActor(ctx context.Context, identity DocumentIdentity, actor ActorContext) (DocumentMetadata, error) {
 	if identity.ResourceType != ResourceDocx && identity.ResourceType != ResourceUnknown {
 		return DocumentMetadata{}, newError(ErrUnsupportedDocumentType, fmt.Sprintf("metadata for resource type %s is not implemented yet", identity.ResourceType), nil)
 	}
 
 	var raw map[string]any
 	path := fmt.Sprintf(s.cfg.DocxMetadataPathTemplate, url.PathEscape(identity.Token))
-	if err := s.client.GetJSON(ctx, path, nil, &raw); err != nil {
+	if err := s.client.GetJSONWithActor(ctx, path, nil, &raw, actor); err != nil {
 		return DocumentMetadata{}, err
 	}
 	metadata := metadataFromRaw(identity, raw)
@@ -63,11 +94,15 @@ func (s *Service) GetMetadataByIdentity(ctx context.Context, identity DocumentId
 }
 
 func (s *Service) ReadDocument(ctx context.Context, input string, options ReadOptions) (DocumentReadResult, error) {
+	return s.ReadDocumentWithActor(ctx, input, options, ActorContext{})
+}
+
+func (s *Service) ReadDocumentWithActor(ctx context.Context, input string, options ReadOptions, actor ActorContext) (DocumentReadResult, error) {
 	identity, err := s.Resolve(input)
 	if err != nil {
 		return DocumentReadResult{}, err
 	}
-	metadata, err := s.GetMetadataByIdentity(ctx, identity)
+	metadata, err := s.GetMetadataByIdentityWithActor(ctx, identity, actor)
 	if err != nil {
 		return DocumentReadResult{}, err
 	}
@@ -82,7 +117,7 @@ func (s *Service) ReadDocument(ctx context.Context, input string, options ReadOp
 	}
 
 	state := readState{maxBlocks: maxBlocks, maxDepth: maxDepth, includeRaw: options.IncludeUnsupportedRaw}
-	blocks, err := s.readChildren(ctx, identity, identity.Token, 0, &state)
+	blocks, err := s.readChildren(ctx, identity, identity.Token, 0, &state, actor)
 	if err != nil {
 		return DocumentReadResult{}, err
 	}
@@ -95,6 +130,10 @@ func (s *Service) ReadDocument(ctx context.Context, input string, options ReadOp
 }
 
 func (s *Service) CreateDocument(ctx context.Context, req CreateDocumentRequest) (DocumentWriteResult, error) {
+	return s.CreateDocumentWithActor(ctx, req, ActorContext{})
+}
+
+func (s *Service) CreateDocumentWithActor(ctx context.Context, req CreateDocumentRequest, actor ActorContext) (DocumentWriteResult, error) {
 	body, err := buildCreateDocumentRequest(req)
 	if err != nil {
 		return DocumentWriteResult{}, err
@@ -111,7 +150,7 @@ func (s *Service) CreateDocument(ctx context.Context, req CreateDocumentRequest)
 	}
 
 	var raw map[string]any
-	if err := s.client.PostJSON(ctx, s.cfg.DocxCreatePath, body, &raw); err != nil {
+	if err := s.client.PostJSONWithActor(ctx, s.cfg.DocxCreatePath, body, &raw, actor); err != nil {
 		return DocumentWriteResult{}, err
 	}
 	identity := documentIdentityFromCreateResponse(raw, s.cfg.Provider)
@@ -121,7 +160,7 @@ func (s *Service) CreateDocument(ctx context.Context, req CreateDocumentRequest)
 		return result, newError(ErrUpstream, "create document response did not include document id", nil)
 	}
 	if strings.TrimSpace(req.Markdown) != "" {
-		appendResult, err := s.AppendDocument(ctx, result.DocumentID, AppendRequest{Markdown: req.Markdown, DryRun: &dryRun, OperationID: operationID + ":append"})
+		appendResult, err := s.AppendDocumentWithActor(ctx, result.DocumentID, AppendRequest{Markdown: req.Markdown, DryRun: &dryRun, OperationID: operationID + ":append"}, actor)
 		if err != nil {
 			return result, err
 		}
@@ -131,6 +170,10 @@ func (s *Service) CreateDocument(ctx context.Context, req CreateDocumentRequest)
 }
 
 func (s *Service) AppendDocument(ctx context.Context, input string, req AppendRequest) (DocumentWriteResult, error) {
+	return s.AppendDocumentWithActor(ctx, input, req, ActorContext{})
+}
+
+func (s *Service) AppendDocumentWithActor(ctx context.Context, input string, req AppendRequest, actor ActorContext) (DocumentWriteResult, error) {
 	identity, err := s.Resolve(input)
 	if err != nil {
 		return DocumentWriteResult{}, err
@@ -165,7 +208,7 @@ func (s *Service) AppendDocument(ctx context.Context, input string, req AppendRe
 
 	path := fmt.Sprintf(s.cfg.DocxAppendChildrenPathTemplate, url.PathEscape(identity.Token), url.PathEscape(blockID))
 	var raw map[string]any
-	if err := s.client.PostJSON(ctx, path, body, &raw); err != nil {
+	if err := s.client.PostJSONWithActor(ctx, path, body, &raw, actor); err != nil {
 		return result, err
 	}
 	result.ChangedBlocks = changedBlockIDs(raw, ids)
@@ -181,7 +224,7 @@ type readState struct {
 	warnings   []string
 }
 
-func (s *Service) readChildren(ctx context.Context, identity DocumentIdentity, blockID string, depth int, state *readState) ([]NormalizedBlock, error) {
+func (s *Service) readChildren(ctx context.Context, identity DocumentIdentity, blockID string, depth int, state *readState, actor ActorContext) ([]NormalizedBlock, error) {
 	if depth > state.maxDepth {
 		state.truncated = true
 		state.warnings = append(state.warnings, fmt.Sprintf("max depth %d reached at block %s", state.maxDepth, blockID))
@@ -199,7 +242,7 @@ func (s *Service) readChildren(ctx context.Context, identity DocumentIdentity, b
 			state.truncated = true
 			break
 		}
-		rawPage, err := s.listBlockChildren(ctx, identity, blockID, pageToken)
+		rawPage, err := s.listBlockChildren(ctx, identity, blockID, pageToken, actor)
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +255,7 @@ func (s *Service) readChildren(ctx context.Context, identity DocumentIdentity, b
 			block := normalizeBlock(identity.Provider, rawBlock, state.includeRaw)
 			state.seen++
 			if block.ID != "" && hasChildren(rawBlock) && depth < state.maxDepth {
-				nested, err := s.readChildren(ctx, identity, block.ID, depth+1, state)
+				nested, err := s.readChildren(ctx, identity, block.ID, depth+1, state, actor)
 				if err != nil {
 					state.warnings = append(state.warnings, fmt.Sprintf("failed to read children for block %s: %v", block.ID, err))
 				} else if len(nested) > 0 {
@@ -229,7 +272,7 @@ func (s *Service) readChildren(ctx context.Context, identity DocumentIdentity, b
 	return blocks, nil
 }
 
-func (s *Service) listBlockChildren(ctx context.Context, identity DocumentIdentity, blockID string, pageToken string) (map[string]any, error) {
+func (s *Service) listBlockChildren(ctx context.Context, identity DocumentIdentity, blockID string, pageToken string, actor ActorContext) (map[string]any, error) {
 	path := fmt.Sprintf(s.cfg.DocxChildrenPathTemplate, url.PathEscape(identity.Token), url.PathEscape(blockID))
 	q := url.Values{}
 	q.Set("page_size", "500")
@@ -237,7 +280,7 @@ func (s *Service) listBlockChildren(ctx context.Context, identity DocumentIdenti
 		q.Set("page_token", pageToken)
 	}
 	var raw map[string]any
-	if err := s.client.GetJSON(ctx, path, q, &raw); err != nil {
+	if err := s.client.GetJSONWithActor(ctx, path, q, &raw, actor); err != nil {
 		return nil, err
 	}
 	return raw, nil

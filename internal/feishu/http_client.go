@@ -14,15 +14,19 @@ import (
 )
 
 type HTTPClient struct {
-	baseURL     string
-	appID       string
-	appSecret   string
-	staticToken string
-	client      *http.Client
-	maxRetries  int
-	tokenMu     sync.Mutex
-	cachedToken string
-	tokenExpiry time.Time
+	baseURL          string
+	appID            string
+	appSecret        string
+	staticToken      string
+	provider         Provider
+	oauthTokenPath   string
+	oauthRefreshPath string
+	client           *http.Client
+	maxRetries       int
+	tokenSource      TokenSource
+	tokenMu          sync.Mutex
+	cachedToken      string
+	tokenExpiry      time.Time
 }
 
 type HTTPClientOptions struct {
@@ -30,8 +34,12 @@ type HTTPClientOptions struct {
 	AppID             string
 	AppSecret         string
 	TenantAccessToken string
+	Provider          Provider
+	OAuthTokenPath    string
+	OAuthRefreshPath  string
 	Timeout           time.Duration
 	MaxRetries        int
+	TokenSource       TokenSource
 }
 
 func NewHTTPClient(opts HTTPClientOptions) *HTTPClient {
@@ -39,14 +47,41 @@ func NewHTTPClient(opts HTTPClientOptions) *HTTPClient {
 	if timeout <= 0 {
 		timeout = 15 * time.Second
 	}
-	return &HTTPClient{
-		baseURL:     strings.TrimRight(opts.BaseURL, "/"),
-		appID:       opts.AppID,
-		appSecret:   opts.AppSecret,
-		staticToken: opts.TenantAccessToken,
-		client:      &http.Client{Timeout: timeout},
-		maxRetries:  opts.MaxRetries,
+	provider := opts.Provider
+	if provider == "" {
+		provider = ProviderFeishu
 	}
+	tokenPath := strings.TrimSpace(opts.OAuthTokenPath)
+	if tokenPath == "" {
+		tokenPath = "/open-apis/authen/v2/oauth/token"
+	}
+	refreshPath := strings.TrimSpace(opts.OAuthRefreshPath)
+	if refreshPath == "" {
+		refreshPath = tokenPath
+	}
+	client := &HTTPClient{
+		baseURL:          strings.TrimRight(opts.BaseURL, "/"),
+		appID:            opts.AppID,
+		appSecret:        opts.AppSecret,
+		staticToken:      opts.TenantAccessToken,
+		provider:         provider,
+		oauthTokenPath:   tokenPath,
+		oauthRefreshPath: refreshPath,
+		client:           &http.Client{Timeout: timeout},
+		maxRetries:       opts.MaxRetries,
+	}
+	client.tokenSource = opts.TokenSource
+	if client.tokenSource == nil {
+		client.tokenSource = TenantTokenSource{Client: client}
+	}
+	return client
+}
+
+func (c *HTTPClient) SetTokenSource(source TokenSource) {
+	if source == nil {
+		source = TenantTokenSource{Client: c}
+	}
+	c.tokenSource = source
 }
 
 func (c *HTTPClient) TenantToken(ctx context.Context) (string, error) {
@@ -72,7 +107,7 @@ func (c *HTTPClient) TenantToken(ctx context.Context) (string, error) {
 		TenantAccessToken string `json:"tenant_access_token"`
 		Expire            int64  `json:"expire"`
 	}
-	if err := c.doJSON(ctx, http.MethodPost, "/open-apis/auth/v3/tenant_access_token/internal", nil, payload, &out, false); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/open-apis/auth/v3/tenant_access_token/internal", nil, payload, &out, false, ActorContext{}); err != nil {
 		return "", err
 	}
 	if out.Code != 0 || out.TenantAccessToken == "" {
@@ -91,14 +126,22 @@ func (c *HTTPClient) TenantToken(ctx context.Context) (string, error) {
 }
 
 func (c *HTTPClient) GetJSON(ctx context.Context, path string, query url.Values, out any) error {
-	return c.doJSON(ctx, http.MethodGet, path, query, nil, out, true)
+	return c.GetJSONWithActor(ctx, path, query, out, ActorContext{})
 }
 
 func (c *HTTPClient) PostJSON(ctx context.Context, path string, in any, out any) error {
-	return c.doJSON(ctx, http.MethodPost, path, nil, in, out, true)
+	return c.PostJSONWithActor(ctx, path, in, out, ActorContext{})
 }
 
-func (c *HTTPClient) doJSON(ctx context.Context, method, path string, query url.Values, in any, out any, withAuth bool) error {
+func (c *HTTPClient) GetJSONWithActor(ctx context.Context, path string, query url.Values, out any, actor ActorContext) error {
+	return c.doJSON(ctx, http.MethodGet, path, query, nil, out, true, actor)
+}
+
+func (c *HTTPClient) PostJSONWithActor(ctx context.Context, path string, in any, out any, actor ActorContext) error {
+	return c.doJSON(ctx, http.MethodPost, path, nil, in, out, true, actor)
+}
+
+func (c *HTTPClient) doJSON(ctx context.Context, method, path string, query url.Values, in any, out any, withAuth bool, actor ActorContext) error {
 	body, err := encodeBody(in)
 	if err != nil {
 		return newError(ErrInvalidInput, "failed to encode request body", err)
@@ -120,7 +163,11 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, query url.
 		}
 		req.Header.Set("Content-Type", "application/json; charset=utf-8")
 		if withAuth {
-			token, err := c.TenantToken(ctx)
+			source := c.tokenSource
+			if source == nil {
+				source = TenantTokenSource{Client: c}
+			}
+			token, _, err := source.Token(ctx, actor)
 			if err != nil {
 				return err
 			}

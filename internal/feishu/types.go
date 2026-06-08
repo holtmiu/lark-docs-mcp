@@ -1,11 +1,44 @@
 package feishu
 
+import "time"
+
 type Provider string
 
 const (
 	ProviderFeishu Provider = "feishu"
 	ProviderLark   Provider = "lark"
 )
+
+type AuthType string
+
+const (
+	AuthTypeTenant AuthType = "tenant"
+	AuthTypeUser   AuthType = "user"
+)
+
+type CredentialBinding struct {
+	ID           string    `json:"id"`
+	Provider     Provider  `json:"provider"`
+	AuthType     AuthType  `json:"authType"`
+	TenantKey    string    `json:"tenantKey,omitempty"`
+	UserID       string    `json:"userId,omitempty"`
+	OpenID       string    `json:"openId,omitempty"`
+	AccessToken  string    `json:"-"`
+	RefreshToken string    `json:"-"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	Scopes       []string  `json:"scopes"`
+}
+
+func (b CredentialBinding) IsExpired(now time.Time) bool {
+	return b.ExpiresAt.IsZero() || !b.ExpiresAt.After(now)
+}
+
+type ActorContext struct {
+	CredentialID string   `json:"credentialId,omitempty"`
+	UserID       string   `json:"userId,omitempty"`
+	OpenID       string   `json:"openId,omitempty"`
+	AuthType     AuthType `json:"authType,omitempty"`
+}
 
 type ResourceType string
 

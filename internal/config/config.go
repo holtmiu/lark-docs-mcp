@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +30,14 @@ type Config struct {
 	DocxCreatePath                 string
 	MCPHTTPAddr                    string
 	MCPServerAPIKey                string
+	OAuthRedirectURI               string
+	OAuthScopes                    []string
+	OAuthStateSecret               string
+	OAuthAuthPath                  string
+	OAuthTokenPath                 string
+	OAuthRefreshPath               string
+	TokenStorePath                 string
+	TokenEncryptKey                string
 }
 
 func Load() Config {
@@ -40,7 +49,7 @@ func Load() Config {
 
 	return Config{
 		Provider:                       provider,
-		BaseURL:                        strings.TrimRight(getenv("FEISHU_BASE_URL", defaultBase), "/"),
+		BaseURL:                        safeBaseURL(getenv("FEISHU_BASE_URL", defaultBase), defaultBase),
 		AppID:                          os.Getenv("FEISHU_APP_ID"),
 		AppSecret:                      os.Getenv("FEISHU_APP_SECRET"),
 		TenantAccessToken:              os.Getenv("FEISHU_TENANT_ACCESS_TOKEN"),
@@ -55,6 +64,44 @@ func Load() Config {
 		DocxCreatePath:                 getenv("FEISHU_DOCX_CREATE_PATH", "/open-apis/docx/v1/documents"),
 		MCPHTTPAddr:                    getenv("MCP_HTTP_ADDR", ":8080"),
 		MCPServerAPIKey:                os.Getenv("MCP_SERVER_API_KEY"),
+		OAuthRedirectURI:               getenv("FEISHU_OAUTH_REDIRECT_URI", ""),
+		OAuthScopes:                    getenvList("FEISHU_OAUTH_SCOPES", "offline_access,docs:doc:readonly,docs:doc:write,drive:drive:readonly"),
+		OAuthStateSecret:               getenv("FEISHU_OAUTH_STATE_SECRET", ""),
+		OAuthAuthPath:                  getenv("FEISHU_OAUTH_AUTH_PATH", "/open-apis/authen/v1/authorize"),
+		OAuthTokenPath:                 getenv("FEISHU_OAUTH_TOKEN_PATH", "/open-apis/authen/v2/oauth/token"),
+		OAuthRefreshPath:               getenv("FEISHU_OAUTH_REFRESH_PATH", "/open-apis/authen/v2/oauth/token"),
+		TokenStorePath:                 getenv("FEISHU_TOKEN_STORE_PATH", ".data/feishu_tokens.json"),
+		TokenEncryptKey:                getenv("FEISHU_TOKEN_ENCRYPT_KEY", ""),
+	}
+}
+
+func safeBaseURL(raw, fallback string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fallback
+	}
+	if !isSafeBaseURL(parsed) {
+		return fallback
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/")
+}
+
+func isSafeBaseURL(parsed *url.URL) bool {
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme == "https" {
+		return true
+	}
+	return scheme == "http" && isLocalHost(parsed.Hostname())
+}
+
+func isLocalHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -87,4 +134,20 @@ func getenvBool(key string, fallback bool) bool {
 		return fallback
 	}
 	return parsed
+}
+
+func getenvList(key, fallback string) []string {
+	value := os.Getenv(key)
+	if strings.TrimSpace(value) == "" {
+		value = fallback
+	}
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }
