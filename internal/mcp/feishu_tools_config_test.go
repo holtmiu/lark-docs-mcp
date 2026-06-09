@@ -64,6 +64,28 @@ func TestNewFeishuToolsFromConfigRedactsConfiguredSecretsInLoadErrors(t *testing
 	}
 }
 
+func TestNewFeishuToolsFromConfigRedactsLocalSkillManifestPathsInLoadErrors(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, "broken", "skill.yaml")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", filepath.Dir(manifestPath), err)
+	}
+	if err := os.WriteFile(manifestPath, []byte("name: broken\ninputs:\n  type: object\nsteps:\n  - tool: shell_exec\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", manifestPath, err)
+	}
+
+	_, err := NewFeishuToolsFromConfig(config.Config{SkillDirs: []string{root}}, false)
+	if err == nil {
+		t.Fatal("NewFeishuToolsFromConfig succeeded for invalid manifest")
+	}
+	if strings.Contains(err.Error(), root) || strings.Contains(err.Error(), manifestPath) {
+		t.Fatalf("error leaked local manifest path: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "[skill-dir]") {
+		t.Fatalf("error = %q, want skill path redaction marker", err.Error())
+	}
+}
+
 func writeMCPTestSkillManifest(t *testing.T, path string, write bool) {
 	t.Helper()
 	capability := "doc.read"

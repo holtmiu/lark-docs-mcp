@@ -221,6 +221,125 @@ func TestRealWriteRequiresOperationIDWhenToolSupportsIt(t *testing.T) {
 	}
 }
 
+func TestRealWriteRequiresResolvedOperationIDAfterInterpolation(t *testing.T) {
+	manifest := writeCommentManifest(map[string]any{"input": "doc-token", "content": "hi", "dryRun": false, "operationId": "${operationId}"})
+	caller := &fakeToolCaller{results: []any{map[string]any{"canWrite": true, "canComment": true}}}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: true})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "comment", Inputs: map[string]any{"operationId": ""}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "operation_id_required")
+	if len(caller.calls) != 0 {
+		t.Fatalf("calls = %#v, want no preflight or write call when resolved operationId is empty", caller.calls)
+	}
+}
+
+func TestRealWriteRequiresPermissionPreflightTargetMatch(t *testing.T) {
+	manifest := Manifest{
+		Name:         "comment",
+		Write:        true,
+		Inputs:       map[string]any{"type": "object"},
+		Capabilities: []string{"doc.comment.create"},
+		Steps: []Step{
+			{Tool: "feishu_doc_check_permission", Args: map[string]any{"input": "doc-A", "credentialId": "cred-1"}},
+			{Tool: "feishu_doc_create_comment", Args: map[string]any{"input": "doc-B", "credentialId": "cred-1", "content": "hi", "dryRun": false, "operationId": "op-1"}},
+		},
+	}
+	caller := &fakeToolCaller{results: []any{map[string]any{"canWrite": true, "canComment": true}}}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: true})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "comment", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "permission_preflight_target_mismatch")
+	if len(caller.calls) != 1 || caller.calls[0].tool != "feishu_doc_check_permission" {
+		t.Fatalf("calls = %#v, want only mismatched permission preflight", caller.calls)
+	}
+}
+
+func TestRealWriteRequiresPermissionPreflightCredentialMatch(t *testing.T) {
+	manifest := Manifest{
+		Name:         "comment",
+		Write:        true,
+		Inputs:       map[string]any{"type": "object"},
+		Capabilities: []string{"doc.comment.create"},
+		Steps: []Step{
+			{Tool: "feishu_doc_check_permission", Args: map[string]any{"input": "doc-token", "credentialId": "cred-1"}},
+			{Tool: "feishu_doc_create_comment", Args: map[string]any{"input": "doc-token", "credentialId": "cred-2", "content": "hi", "dryRun": false, "operationId": "op-1"}},
+		},
+	}
+	caller := &fakeToolCaller{results: []any{map[string]any{"canWrite": true, "canComment": true}}}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: true})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "comment", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "permission_preflight_target_mismatch")
+	if len(caller.calls) != 1 || caller.calls[0].tool != "feishu_doc_check_permission" {
+		t.Fatalf("calls = %#v, want only mismatched permission preflight", caller.calls)
+	}
+}
+
+func TestRealCreateRequiresBoundPreflightForFolderTarget(t *testing.T) {
+	manifest := Manifest{
+		Name:         "create-doc",
+		Write:        true,
+		Inputs:       map[string]any{"type": "object"},
+		Capabilities: []string{"doc.create"},
+		Steps: []Step{
+			{Tool: "feishu_doc_check_permission", Args: map[string]any{"input": "folder-A"}},
+			{Tool: "feishu_doc_create", Args: map[string]any{"title": "New", "folderToken": "folder-B", "dryRun": false, "operationId": "op-1"}},
+		},
+	}
+	caller := &fakeToolCaller{results: []any{map[string]any{"canWrite": true}}}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: true})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "create-doc", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "permission_preflight_target_mismatch")
+	if len(caller.calls) != 1 || caller.calls[0].tool != "feishu_doc_check_permission" {
+		t.Fatalf("calls = %#v, want only mismatched permission preflight", caller.calls)
+	}
+}
+
+func TestWriteCreateAllowsBoundPreflightForFolderTarget(t *testing.T) {
+	manifest := Manifest{
+		Name:         "create-doc",
+		Write:        true,
+		Inputs:       map[string]any{"type": "object"},
+		Capabilities: []string{"doc.create"},
+		Steps: []Step{
+			{Tool: "feishu_doc_check_permission", Args: map[string]any{"input": "folder-A", "credentialId": "cred-1"}},
+			{Tool: "feishu_doc_create", Args: map[string]any{"title": "New", "folderToken": "folder-A", "credentialId": "cred-1", "dryRun": false, "operationId": "op-1"}},
+		},
+	}
+	caller := &fakeToolCaller{results: []any{map[string]any{"canWrite": true}, map[string]any{"documentId": "doc-1"}}}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: true})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "create-doc", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(caller.calls) != 2 || caller.calls[1].tool != "feishu_doc_create" {
+		t.Fatalf("calls = %#v, want permission preflight then create", caller.calls)
+	}
+}
+
+func TestWriteCreateWithoutFolderTargetFailsClosed(t *testing.T) {
+	manifest := Manifest{
+		Name:         "create-doc",
+		Write:        true,
+		Inputs:       map[string]any{"type": "object"},
+		Capabilities: []string{"doc.create"},
+		Steps: []Step{
+			{Tool: "feishu_doc_check_permission", Args: map[string]any{"input": "root"}},
+			{Tool: "feishu_doc_create", Args: map[string]any{"title": "New", "dryRun": false, "operationId": "op-1"}},
+		},
+	}
+	caller := &fakeToolCaller{results: []any{map[string]any{"canWrite": true}}}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: true})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "create-doc", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "permission_preflight_target_mismatch")
+	if len(caller.calls) != 1 || caller.calls[0].tool != "feishu_doc_check_permission" {
+		t.Fatalf("calls = %#v, want only permission preflight for unbound root/default create", caller.calls)
+	}
+}
+
 func TestWriteSkillWithoutWriteCapabilityRejectedBeforeMutation(t *testing.T) {
 	manifest := writeCommentManifest(map[string]any{"input": "doc-token", "content": "hi", "dryRun": false, "operationId": "op-1"})
 	manifest.Capabilities = []string{"doc.read"}

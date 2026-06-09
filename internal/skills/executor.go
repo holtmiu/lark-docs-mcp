@@ -122,10 +122,18 @@ func (e ReadOnlyExecutor) Run(ctx context.Context, req RunRequest) (RunResult, e
 		}
 		resolvedSteps[i] = StepResult{Index: i, Tool: step.Tool, Args: args}
 	}
+	if !dryRun {
+		if err := validateResolvedRealWriteSteps(manifest, resolvedSteps); err != nil {
+			return RunResult{}, err
+		}
+	}
 	steps := make([]StepResult, 0, len(manifest.Steps))
-	var permissionResult any
+	var permission permissionPreflight
 	for _, step := range resolvedSteps {
-		if isWriteStepTool(step.Tool) && !dryRun && !permissionAllowsTool(step.Tool, permissionResult) {
+		if isWriteStepTool(step.Tool) && !dryRun && !permissionTargetsWrite(permission.Args, step.Args, step.Tool) {
+			return RunResult{}, SkillError{Code: "permission_preflight_target_mismatch", Message: fmt.Sprintf("skill %q step %d permission preflight target does not match write target", manifest.Name, step.Index), Name: manifest.Name}
+		}
+		if isWriteStepTool(step.Tool) && !dryRun && !permissionAllowsTool(step.Tool, permission.Result) {
 			return RunResult{}, SkillError{Code: "permission_preflight_denied", Message: fmt.Sprintf("skill %q step %d permission preflight denied mutation", manifest.Name, step.Index), Name: manifest.Name}
 		}
 		result, err := e.caller.CallTool(ctx, step.Tool, step.Args)
@@ -133,12 +141,30 @@ func (e ReadOnlyExecutor) Run(ctx context.Context, req RunRequest) (RunResult, e
 			return RunResult{}, SkillError{Code: "skill_step_failed", Message: fmt.Sprintf("step %d %s failed: %v", step.Index, step.Tool, err), Name: manifest.Name, Err: err}
 		}
 		if step.Tool == "feishu_doc_check_permission" {
-			permissionResult = result
+			permission = permissionPreflight{Args: step.Args, Result: result, Valid: true}
 		}
 		step.Result = result
 		steps = append(steps, step)
 	}
 	return RunResult{Skill: manifest.Name, Inputs: inputs, DryRun: dryRun, Steps: steps}, nil
+}
+
+type permissionPreflight struct {
+	Args   map[string]any
+	Result any
+	Valid  bool
+}
+
+func validateResolvedRealWriteSteps(manifest Manifest, steps []StepResult) error {
+	for _, step := range steps {
+		if !isWriteStepTool(step.Tool) {
+			continue
+		}
+		if writeStepToolRequiresOperationID(step.Tool) && !hasOperationID(step.Args) {
+			return SkillError{Code: "operation_id_required", Message: fmt.Sprintf("skill %q step %d tool %q requires non-empty operationId for dryRun=false", manifest.Name, step.Index, step.Tool), Name: manifest.Name}
+		}
+	}
+	return nil
 }
 
 func (e ReadOnlyExecutor) validateManifestForRun(manifest Manifest, dryRun bool) error {
@@ -227,6 +253,44 @@ func permissionAllowsTool(tool string, result any) bool {
 	default:
 		return canWrite
 	}
+}
+
+func permissionTargetsWrite(preflightArgs, writeArgs map[string]any, tool string) bool {
+	preflightInput, ok := stringArg(preflightArgs, "input")
+	if !ok || preflightInput == "" {
+		return false
+	}
+	writeTarget, ok := writePermissionTarget(tool, writeArgs)
+	if !ok || preflightInput != writeTarget {
+		return false
+	}
+	writeCredential, hasWriteCredential := stringArg(writeArgs, "credentialId")
+	if !hasWriteCredential || writeCredential == "" {
+		return true
+	}
+	preflightCredential, hasPreflightCredential := stringArg(preflightArgs, "credentialId")
+	return hasPreflightCredential && preflightCredential == writeCredential
+}
+
+func writePermissionTarget(tool string, args map[string]any) (string, bool) {
+	if input, ok := stringArg(args, "input"); ok && input != "" {
+		return input, true
+	}
+	if tool == "feishu_doc_create" {
+		folderToken, ok := stringArg(args, "folderToken")
+		if ok && folderToken != "" {
+			return folderToken, true
+		}
+	}
+	return "", false
+}
+
+func stringArg(args map[string]any, key string) (string, bool) {
+	value, ok := args[key].(string)
+	if !ok {
+		return "", false
+	}
+	return strings.TrimSpace(value), true
 }
 
 func permissionBooleans(result any) (canWrite bool, canComment bool, ok bool) {

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/holtmiu/lark-docs-mcp/internal/config"
@@ -24,10 +25,26 @@ func NewFeishuToolsFromConfig(cfg config.Config, allowCredentialSelection bool) 
 
 	registry, err := skills.LoadRegistryWithOptions(cfg.SkillDirs, skills.RegistryOptions{EnableWrite: cfg.SkillsEnableWrite})
 	if err != nil {
-		return FeishuTools{}, fmt.Errorf("load skill registry: %s", redactConfiguredSecrets(err.Error(), cfg))
+		return FeishuTools{}, fmt.Errorf("load skill registry: %s", redactSkillRegistryLoadError(err.Error(), cfg))
 	}
 	tools.SkillRegistry = registry
 	return tools, nil
+}
+
+func redactSkillRegistryLoadError(message string, cfg config.Config) string {
+	message = redactConfiguredSecrets(message, cfg)
+	for _, dir := range cfg.SkillDirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		message = strings.ReplaceAll(message, dir, "[skill-dir]")
+		cleaned := filepath.Clean(dir)
+		if cleaned != "." {
+			message = strings.ReplaceAll(message, cleaned, "[skill-dir]")
+		}
+	}
+	return message
 }
 
 func redactConfiguredSecrets(message string, cfg config.Config) string {

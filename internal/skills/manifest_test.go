@@ -90,13 +90,7 @@ func TestParseManifestWriteCapabilityWithoutWriteTrueFails(t *testing.T) {
 }
 
 func TestParseManifestWriteStepToolWithoutWriteTrueFails(t *testing.T) {
-	writeTools := []string{
-		"feishu_doc_create",
-		"feishu_doc_append",
-		"feishu_doc_create_comment",
-		"feishu_doc_reply_comment",
-		"feishu_doc_resolve_comment",
-	}
+	writeTools := WriteStepToolNames()
 
 	for _, tool := range writeTools {
 		t.Run(tool, func(t *testing.T) {
@@ -110,6 +104,31 @@ func TestParseManifestWriteStepToolWithoutWriteTrueFails(t *testing.T) {
 				t.Fatalf("error = %q, want mention write step tool", err.Error())
 			}
 		})
+	}
+}
+
+func TestCurrentMCPWriteToolsAreSkillWriteStepTools(t *testing.T) {
+	currentMCPWriteTools := []string{
+		"feishu_doc_create",
+		"feishu_doc_append",
+		"feishu_doc_create_comment",
+		"feishu_doc_reply_comment",
+		"feishu_doc_resolve_comment",
+	}
+	writeTools := map[string]struct{}{}
+	for _, tool := range WriteStepToolNames() {
+		writeTools[tool] = struct{}{}
+	}
+	for _, tool := range currentMCPWriteTools {
+		if _, ok := writeTools[tool]; !ok {
+			t.Fatalf("MCP write tool %q missing from skills write step tool allowlist", tool)
+		}
+		if !writeStepToolRequiresOperationID(tool) {
+			t.Fatalf("MCP write tool %q missing from operationId-required allowlist", tool)
+		}
+	}
+	if len(writeTools) != len(currentMCPWriteTools) {
+		t.Fatalf("skill write step tools = %v, want current MCP write tools %v", WriteStepToolNames(), currentMCPWriteTools)
 	}
 }
 

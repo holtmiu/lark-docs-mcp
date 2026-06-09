@@ -149,6 +149,11 @@ func isWriteStepTool(tool string) bool {
 	return ok
 }
 
+// WriteStepToolNames returns the current skill write-step tool allowlist.
+func WriteStepToolNames() []string {
+	return sortedKeys(writeStepTools)
+}
+
 func sortedKeys(values map[string]struct{}) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
