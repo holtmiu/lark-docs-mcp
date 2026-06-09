@@ -50,6 +50,8 @@ type Config struct {
 	OAuthRefreshPath               string
 	TokenStorePath                 string
 	TokenEncryptKey                string
+	SkillDirs                      []string
+	SkillsEnableWrite              bool
 }
 
 func Load() Config {
@@ -95,6 +97,8 @@ func Load() Config {
 		OAuthRefreshPath:               getenv("FEISHU_OAUTH_REFRESH_PATH", "/open-apis/authen/v2/oauth/token"),
 		TokenStorePath:                 getenv("FEISHU_TOKEN_STORE_PATH", ".data/feishu_tokens.json"),
 		TokenEncryptKey:                getenv("FEISHU_TOKEN_ENCRYPT_KEY", ""),
+		SkillDirs:                      getenvList("FEISHU_SKILLS_DIRS", ""),
+		SkillsEnableWrite:              getenvBool("FEISHU_SKILLS_ENABLE_WRITE", false),
 	}
 }
 

@@ -73,6 +73,31 @@ func TestLoadOAuthScopesTrimsAndDropsEmptyValues(t *testing.T) {
 	}
 }
 
+func TestLoadSkillRegistryConfigParsesDirsAndDefaultsWriteDisabled(t *testing.T) {
+	t.Setenv("FEISHU_SKILLS_DIRS", " /opt/skills/a, ,./skills/b ")
+	t.Setenv("FEISHU_SKILLS_ENABLE_WRITE", "")
+
+	cfg := Load()
+
+	wantDirs := []string{"/opt/skills/a", "./skills/b"}
+	if !reflect.DeepEqual(cfg.SkillDirs, wantDirs) {
+		t.Fatalf("SkillDirs = %#v, want %#v", cfg.SkillDirs, wantDirs)
+	}
+	if cfg.SkillsEnableWrite {
+		t.Fatal("SkillsEnableWrite = true, want false by default")
+	}
+}
+
+func TestLoadSkillRegistryConfigParsesWriteEnabled(t *testing.T) {
+	t.Setenv("FEISHU_SKILLS_ENABLE_WRITE", "true")
+
+	cfg := Load()
+
+	if !cfg.SkillsEnableWrite {
+		t.Fatal("SkillsEnableWrite = false, want true")
+	}
+}
+
 func TestLoadMCPSecurityOverrides(t *testing.T) {
 	t.Setenv("MCP_ALLOW_UNAUTHENTICATED", "true")
 	t.Setenv("MCP_ALLOWED_ORIGINS", " https://chat.openai.com, https://example.test ")
