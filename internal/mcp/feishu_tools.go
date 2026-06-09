@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -63,6 +64,14 @@ func (e structuredToolError) Error() string {
 		return e.Message
 	}
 	return string(raw)
+}
+
+func structuredSkillRunError(err error) error {
+	var skillErr skills.SkillError
+	if errors.As(err, &skillErr) {
+		return structuredToolError{Code: skillErr.Code, Message: skillErr.Error(), Name: skillErr.Name}
+	}
+	return structuredToolError{Code: "skill_step_failed", Message: err.Error()}
 }
 
 func (t FeishuTools) Tools() []Tool {
@@ -393,7 +402,11 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 			return nil, structuredToolError{Code: "invalid_skill_name", Message: "skill name exceeds max length 128"}
 		}
 		executor := skills.NewReadOnlyExecutor(t.SkillRegistry, feishuToolCaller{tools: t})
-		return executor.Run(ctx, req)
+		result, err := executor.Run(ctx, req)
+		if err != nil {
+			return nil, structuredSkillRunError(err)
+		}
+		return result, nil
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}

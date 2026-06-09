@@ -9,6 +9,33 @@ import (
 
 var simpleInputInterpolation = regexp.MustCompile(`^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$`)
 
+const MaxReadOnlySkillSteps = 50
+
+type SkillError struct {
+	Code    string
+	Message string
+	Name    string
+	Err     error
+}
+
+func (e SkillError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return e.Code
+}
+
+func (e SkillError) Unwrap() error {
+	return e.Err
+}
+
+func skillError(code, message string, err error) SkillError {
+	return SkillError{Code: code, Message: message, Err: err}
+}
+
 type ExecutorRegistry interface {
 	Get(name string) (Manifest, bool)
 }
@@ -48,15 +75,18 @@ func NewReadOnlyExecutor(registry ExecutorRegistry, caller ToolCaller) ReadOnlyE
 
 func (e ReadOnlyExecutor) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if e.registry == nil {
-		return RunResult{}, fmt.Errorf("skill registry is not configured")
+		return RunResult{}, skillError("skill_executor_unconfigured", "skill registry is not configured", nil)
+	}
+	if e.caller == nil {
+		return RunResult{}, skillError("skill_executor_unconfigured", "skill tool caller is not configured", nil)
 	}
 	name := strings.TrimSpace(req.Skill)
 	if name == "" {
-		return RunResult{}, fmt.Errorf("skill name is required")
+		return RunResult{}, skillError("invalid_skill_input", "skill name is required", nil)
 	}
 	manifest, ok := e.registry.Get(name)
 	if !ok {
-		return RunResult{}, fmt.Errorf("skill %q was not found", name)
+		return RunResult{}, SkillError{Code: "skill_not_found", Message: fmt.Sprintf("skill %q was not found", name), Name: name}
 	}
 	if err := validateReadOnlyManifest(manifest); err != nil {
 		return RunResult{}, err
@@ -65,36 +95,44 @@ func (e ReadOnlyExecutor) Run(ctx context.Context, req RunRequest) (RunResult, e
 	if err := validateRequiredInputs(manifest, inputs); err != nil {
 		return RunResult{}, err
 	}
-	steps := make([]StepResult, 0, len(manifest.Steps))
+	if len(manifest.Steps) > MaxReadOnlySkillSteps {
+		return RunResult{}, SkillError{Code: "skill_step_limit_exceeded", Message: fmt.Sprintf("skill %q has %d steps, exceeding max %d", manifest.Name, len(manifest.Steps), MaxReadOnlySkillSteps), Name: manifest.Name}
+	}
+	resolvedSteps := make([]StepResult, len(manifest.Steps))
 	for i, step := range manifest.Steps {
 		args, err := interpolateArgs(step.Args, inputs)
 		if err != nil {
-			return RunResult{}, fmt.Errorf("step %d %s: %w", i, step.Tool, err)
+			return RunResult{}, SkillError{Code: "unsupported_interpolation", Message: fmt.Sprintf("step %d %s: %v", i, step.Tool, err), Name: manifest.Name, Err: err}
 		}
-		result, err := e.caller.CallTool(ctx, step.Tool, args)
+		resolvedSteps[i] = StepResult{Index: i, Tool: step.Tool, Args: args}
+	}
+	steps := make([]StepResult, 0, len(manifest.Steps))
+	for _, step := range resolvedSteps {
+		result, err := e.caller.CallTool(ctx, step.Tool, step.Args)
 		if err != nil {
-			return RunResult{}, fmt.Errorf("step %d %s failed: %w", i, step.Tool, err)
+			return RunResult{}, SkillError{Code: "skill_step_failed", Message: fmt.Sprintf("step %d %s failed: %v", step.Index, step.Tool, err), Name: manifest.Name, Err: err}
 		}
-		steps = append(steps, StepResult{Index: i, Tool: step.Tool, Args: args, Result: result})
+		step.Result = result
+		steps = append(steps, step)
 	}
 	return RunResult{Skill: manifest.Name, Inputs: inputs, DryRun: req.DryRun, Steps: steps}, nil
 }
 
 func validateReadOnlyManifest(manifest Manifest) error {
 	if manifest.Write {
-		return fmt.Errorf("skill %q is write-capable and cannot run in read-only executor mode", manifest.Name)
+		return SkillError{Code: "read_only_violation", Message: fmt.Sprintf("skill %q is write-capable and cannot run in read-only executor mode", manifest.Name), Name: manifest.Name}
 	}
 	for _, capability := range manifest.Capabilities {
 		if isWriteCapability(capability) {
-			return fmt.Errorf("skill %q capability %q is write-capable and cannot run in read-only executor mode", manifest.Name, capability)
+			return SkillError{Code: "read_only_violation", Message: fmt.Sprintf("skill %q capability %q is write-capable and cannot run in read-only executor mode", manifest.Name, capability), Name: manifest.Name}
 		}
 	}
 	for i, step := range manifest.Steps {
 		if !isAllowedStepTool(step.Tool) {
-			return fmt.Errorf("skill %q step %d tool %q is not allowed", manifest.Name, i, step.Tool)
+			return SkillError{Code: "read_only_violation", Message: fmt.Sprintf("skill %q step %d tool %q is not allowed", manifest.Name, i, step.Tool), Name: manifest.Name}
 		}
 		if isWriteStepTool(step.Tool) {
-			return fmt.Errorf("skill %q step %d tool %q is write-capable and cannot run in read-only executor mode", manifest.Name, i, step.Tool)
+			return SkillError{Code: "read_only_violation", Message: fmt.Sprintf("skill %q step %d tool %q is write-capable and cannot run in read-only executor mode", manifest.Name, i, step.Tool), Name: manifest.Name}
 		}
 	}
 	return nil
@@ -107,7 +145,7 @@ func validateRequiredInputs(manifest Manifest, inputs map[string]any) error {
 	}
 	for _, name := range requiredInputNames(required) {
 		if _, ok := inputs[name]; !ok {
-			return fmt.Errorf("required input %q is missing", name)
+			return skillError("invalid_skill_input", fmt.Sprintf("required input %q is missing", name), nil)
 		}
 	}
 	return nil

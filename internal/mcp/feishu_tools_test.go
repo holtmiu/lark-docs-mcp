@@ -502,6 +502,58 @@ func TestSkillRunUnconfiguredReturnsStructuredError(t *testing.T) {
 	assertStructuredSkillError(t, err, "registry_unconfigured", "")
 }
 
+func TestSkillRunExecutorErrorsReturnStructuredMCPJSON(t *testing.T) {
+	t.Run("executor unconfigured", func(t *testing.T) {
+		assertStructuredSkillError(t, structuredSkillRunError(skills.SkillError{Code: "skill_executor_unconfigured", Message: "skill tool caller is not configured"}), "skill_executor_unconfigured", "")
+	})
+
+	tests := []struct {
+		name     string
+		manifest skills.Manifest
+		args     string
+		wantCode string
+	}{
+		{
+			name:     "not found",
+			manifest: skills.Manifest{Name: "known", Inputs: map[string]any{"type": "object"}},
+			args:     `{"name":"missing"}`,
+			wantCode: "skill_not_found",
+		},
+		{
+			name:     "invalid input",
+			manifest: skills.Manifest{Name: "reader", Inputs: map[string]any{"type": "object", "required": []any{"input"}}, Steps: []skills.Step{{Tool: "feishu_doc_read", Args: map[string]any{"input": "${input}"}}}},
+			args:     `{"name":"reader","inputs":{}}`,
+			wantCode: "invalid_skill_input",
+		},
+		{
+			name:     "unsupported interpolation",
+			manifest: skills.Manifest{Name: "reader", Inputs: map[string]any{"type": "object"}, Steps: []skills.Step{{Tool: "feishu_doc_read", Args: map[string]any{"input": "${doc.url}"}}}},
+			args:     `{"name":"reader","inputs":{"doc":"url"}}`,
+			wantCode: "unsupported_interpolation",
+		},
+		{
+			name:     "read only violation",
+			manifest: skills.Manifest{Name: "writer", Write: true, Inputs: map[string]any{"type": "object"}, Steps: []skills.Step{{Tool: "feishu_doc_create_comment", Args: map[string]any{"input": "doc", "content": "hi"}}}},
+			args:     `{"name":"writer"}`,
+			wantCode: "read_only_violation",
+		},
+		{
+			name:     "step failed",
+			manifest: skills.Manifest{Name: "reader", Inputs: map[string]any{"type": "object"}, Steps: []skills.Step{{Tool: "feishu_doc_read", Args: map[string]any{"input": ""}}}},
+			args:     `{"name":"reader"}`,
+			wantCode: "skill_step_failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tools := FeishuTools{Service: feishu.NewService(config.Config{}), SkillRegistry: testSkillRegistry{manifests: []skills.Manifest{tt.manifest}}}
+			_, err := tools.CallTool(context.Background(), "feishu_skill_run", json.RawMessage([]byte(tt.args)))
+			assertStructuredSkillError(t, err, tt.wantCode, "")
+		})
+	}
+}
+
 func TestCommentToolsCallHandlers(t *testing.T) {
 	var gotPaths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

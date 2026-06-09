@@ -3,6 +3,7 @@ package skills
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -119,6 +120,68 @@ func TestExecutorReturnsStructuredStepOutputs(t *testing.T) {
 	}
 }
 
+func TestExecutorPrevalidatesAllStepArgsBeforeCallingTools(t *testing.T) {
+	manifest := Manifest{Name: "preflight", Inputs: map[string]any{"type": "object"}, Steps: []Step{
+		{Tool: "feishu_doc_resolve", Args: map[string]any{"input": "${input}"}},
+		{Tool: "feishu_doc_read", Args: map[string]any{"input": "${missing}"}},
+	}}
+	caller := &fakeToolCaller{}
+	executor := NewReadOnlyExecutor(fakeExecutorRegistry{manifest: manifest}, caller)
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "preflight", Inputs: map[string]any{"input": "doc-token"}})
+	assertSkillErrorCode(t, err, "unsupported_interpolation")
+	if len(caller.calls) != 0 {
+		t.Fatalf("calls = %#v, want no calls when a later step arg is invalid", caller.calls)
+	}
+}
+
+func TestExecutorNilCallerFailsClosed(t *testing.T) {
+	manifest := Manifest{Name: "read-doc", Inputs: map[string]any{"type": "object"}, Steps: []Step{{Tool: "feishu_doc_read", Args: map[string]any{"input": "doc-token"}}}}
+	executor := NewReadOnlyExecutor(fakeExecutorRegistry{manifest: manifest}, nil)
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "read-doc"})
+	assertSkillErrorCode(t, err, "skill_executor_unconfigured")
+}
+
+func TestExecutorStepFailureHasStructuredCode(t *testing.T) {
+	manifest := Manifest{Name: "read-doc", Inputs: map[string]any{"type": "object"}, Steps: []Step{{Tool: "feishu_doc_read", Args: map[string]any{"input": "doc-token"}}}}
+	caller := &fakeToolCaller{err: errors.New("boom")}
+	executor := NewReadOnlyExecutor(fakeExecutorRegistry{manifest: manifest}, caller)
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "read-doc"})
+	assertSkillErrorCode(t, err, "skill_step_failed")
+}
+
+func TestExecutorRejectsTooManySteps(t *testing.T) {
+	steps := make([]Step, 51)
+	for i := range steps {
+		steps[i] = Step{Tool: "feishu_doc_read", Args: map[string]any{"input": "doc-token"}}
+	}
+	manifest := Manifest{Name: "too-many", Inputs: map[string]any{"type": "object"}, Steps: steps}
+	caller := &fakeToolCaller{}
+	executor := NewReadOnlyExecutor(fakeExecutorRegistry{manifest: manifest}, caller)
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "too-many"})
+	assertSkillErrorCode(t, err, "skill_step_limit_exceeded")
+	if len(caller.calls) != 0 {
+		t.Fatalf("calls = %#v, want no calls", caller.calls)
+	}
+}
+
+func assertSkillErrorCode(t *testing.T, err error, wantCode string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("error = nil, want code %q", wantCode)
+	}
+	var skillErr SkillError
+	if !errors.As(err, &skillErr) {
+		t.Fatalf("error = %T %[1]v, want SkillError", err)
+	}
+	if skillErr.Code != wantCode {
+		t.Fatalf("error code = %q, want %q (err=%v)", skillErr.Code, wantCode, err)
+	}
+}
+
 type fakeExecutorRegistry struct {
 	manifest Manifest
 	ok       bool
@@ -134,6 +197,7 @@ func (r fakeExecutorRegistry) Get(name string) (Manifest, bool) {
 type fakeToolCaller struct {
 	calls   []fakeToolCall
 	results []any
+	err     error
 }
 
 type fakeToolCall struct {
@@ -143,6 +207,9 @@ type fakeToolCall struct {
 
 func (c *fakeToolCaller) CallTool(ctx context.Context, tool string, args map[string]any) (any, error) {
 	c.calls = append(c.calls, fakeToolCall{tool: tool, args: args})
+	if c.err != nil {
+		return nil, c.err
+	}
 	if len(c.results) >= len(c.calls) {
 		return c.results[len(c.calls)-1], nil
 	}
