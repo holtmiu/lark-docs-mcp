@@ -6,14 +6,63 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/holtmiu/lark-docs-mcp/internal/feishu"
+	"github.com/holtmiu/lark-docs-mcp/internal/skills"
 )
 
 type FeishuTools struct {
 	Service                  *feishu.Service
 	AllowCredentialSelection bool
+	SkillRegistry            SkillRegistry
+}
+
+type SkillRegistry interface {
+	List() []skills.Manifest
+	Get(name string) (skills.Manifest, bool)
+}
+
+type SkillSummary struct {
+	Name         string   `json:"name"`
+	Title        string   `json:"title,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	Capabilities []string `json:"capabilities"`
+}
+
+type SkillManifestSummary struct {
+	Name         string         `json:"name"`
+	Version      string         `json:"version,omitempty"`
+	Title        string         `json:"title,omitempty"`
+	Description  string         `json:"description,omitempty"`
+	Capabilities []string       `json:"capabilities"`
+	Write        bool           `json:"write"`
+	Inputs       map[string]any `json:"inputs,omitempty"`
+	Steps        []skills.Step  `json:"steps,omitempty"`
+	Outputs      map[string]any `json:"outputs,omitempty"`
+}
+
+type SkillListResult struct {
+	Skills []SkillSummary `json:"skills"`
+}
+
+type SkillGetResult struct {
+	Skill SkillManifestSummary `json:"skill"`
+}
+
+type structuredToolError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Name    string `json:"name,omitempty"`
+}
+
+func (e structuredToolError) Error() string {
+	raw, err := json.Marshal(e)
+	if err != nil {
+		return e.Message
+	}
+	return string(raw)
 }
 
 func (t FeishuTools) Tools() []Tool {
@@ -28,7 +77,7 @@ func (t FeishuTools) Tools() []Tool {
 	inputProp := map[string]any{"type": "string", "maxLength": 2048}
 	contentProp := map[string]any{"type": "string", "minLength": 1, "maxLength": 20000}
 	commentIDProp := map[string]any{"type": "string", "maxLength": 256}
-	return []Tool{
+	tools := []Tool{
 		{
 			Name:        "feishu_oauth_auth_url",
 			Description: "Build a Feishu/Lark user OAuth authorization URL for granting document permissions. Does not expose app secrets or tokens.",
@@ -85,6 +134,21 @@ func (t FeishuTools) Tools() []Tool {
 			InputSchema: objectSchema(map[string]any{"input": inputProp, "credentialId": credentialIDProp, "commentId": commentIDProp, "resolved": boolProp, "dryRun": boolProp, "operationId": stringProp}, []string{"input", "commentId", "resolved"}),
 		},
 	}
+	if t.SkillRegistry != nil {
+		tools = append(tools,
+			Tool{
+				Name:        "feishu_skill_list",
+				Description: "List configured Feishu/Lark skill manifests as read-only discovery summaries. Does not execute skills.",
+				InputSchema: objectSchema(map[string]any{}, nil),
+			},
+			Tool{
+				Name:        "feishu_skill_get",
+				Description: "Get one configured Feishu/Lark skill manifest summary by name as read-only discovery. Does not execute skills.",
+				InputSchema: objectSchema(map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}}, []string{"name"}),
+			},
+		)
+	}
+	return tools
 }
 
 func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMessage) (any, error) {
@@ -280,8 +344,65 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 			return nil, fmt.Errorf("resolved is required")
 		}
 		return t.Service.ResolveComment(ctx, req.Input, req.CommentID, feishu.ResolveCommentRequest{Resolved: *req.Resolved, DryRun: req.DryRun, OperationID: req.OperationID}, feishu.ActorContext{CredentialID: req.CredentialID})
+	case "feishu_skill_list":
+		if t.SkillRegistry == nil {
+			return nil, fmt.Errorf("skill registry is not configured")
+		}
+		if err := decodeArgs(args, &struct{}{}); err != nil {
+			return nil, err
+		}
+		return SkillListResult{Skills: summarizeSkillList(t.SkillRegistry.List())}, nil
+	case "feishu_skill_get":
+		if t.SkillRegistry == nil {
+			return nil, fmt.Errorf("skill registry is not configured")
+		}
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := decodeArgs(args, &req); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(req.Name) == "" {
+			return nil, fmt.Errorf("name is required")
+		}
+		if len(req.Name) > 128 {
+			return nil, fmt.Errorf("name exceeds max length 128")
+		}
+		manifest, ok := t.SkillRegistry.Get(req.Name)
+		if !ok {
+			return nil, structuredToolError{Code: "skill_not_found", Message: fmt.Sprintf("skill %q was not found", req.Name), Name: req.Name}
+		}
+		return SkillGetResult{Skill: summarizeSkillManifest(manifest)}, nil
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
+	}
+}
+
+func summarizeSkillList(manifests []skills.Manifest) []SkillSummary {
+	summaries := make([]SkillSummary, 0, len(manifests))
+	for _, manifest := range manifests {
+		summaries = append(summaries, SkillSummary{
+			Name:         manifest.Name,
+			Title:        manifest.Title,
+			Description:  manifest.Description,
+			Capabilities: append([]string(nil), manifest.Capabilities...),
+		})
+	}
+	sort.Slice(summaries, func(i, j int) bool { return summaries[i].Name < summaries[j].Name })
+	return summaries
+}
+
+func summarizeSkillManifest(manifest skills.Manifest) SkillManifestSummary {
+	return SkillManifestSummary{
+		Name:         manifest.Name,
+		Version:      manifest.Version,
+		Title:        manifest.Title,
+		Description:  manifest.Description,
+		Capabilities: append([]string(nil), manifest.Capabilities...),
+		Write:        manifest.Write,
+		Inputs:       manifest.Inputs,
+		Steps:        append([]skills.Step(nil), manifest.Steps...),
+		Outputs:      manifest.Outputs,
 	}
 }
 

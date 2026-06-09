@@ -13,6 +13,7 @@ import (
 
 	"github.com/holtmiu/lark-docs-mcp/internal/config"
 	"github.com/holtmiu/lark-docs-mcp/internal/feishu"
+	"github.com/holtmiu/lark-docs-mcp/internal/skills"
 )
 
 func TestToolsIncludesOAuthAuthURL(t *testing.T) {
@@ -325,6 +326,125 @@ func TestResolveCommentToolRejectsMissingResolved(t *testing.T) {
 	}
 }
 
+func TestToolsListIncludesSkillDiscoveryWhenRegistryConfigured(t *testing.T) {
+	handler := FeishuTools{Service: feishu.NewService(config.Config{}), SkillRegistry: testSkillRegistry{}}
+	server := NewServer("test", "dev", handler)
+	resp := server.HandleRequest(context.Background(), Request{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/list"})
+	if resp.Error != nil {
+		t.Fatalf("tools/list returned error: %+v", resp.Error)
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("tools/list result type = %T", resp.Result)
+	}
+	tools, ok := result["tools"].([]Tool)
+	if !ok {
+		t.Fatalf("tools/list tools type = %T", result["tools"])
+	}
+	names := map[string]bool{}
+	for _, tool := range tools {
+		names[tool.Name] = true
+		if tool.Name == "feishu_skill_list" || tool.Name == "feishu_skill_get" {
+			if !strings.Contains(strings.ToLower(tool.Description), "read-only") {
+				t.Fatalf("%s description should make read-only behavior clear: %q", tool.Name, tool.Description)
+			}
+		}
+	}
+	for _, name := range []string{"feishu_skill_list", "feishu_skill_get"} {
+		if !names[name] {
+			t.Fatalf("%s not found in tools/list: %#v", name, tools)
+		}
+	}
+}
+
+func TestToolsOmitsSkillDiscoveryWhenRegistryNotConfigured(t *testing.T) {
+	tools := FeishuTools{Service: feishu.NewService(config.Config{})}.Tools()
+	for _, tool := range tools {
+		if tool.Name == "feishu_skill_list" || tool.Name == "feishu_skill_get" {
+			t.Fatalf("%s should be omitted without a configured registry", tool.Name)
+		}
+	}
+}
+
+func TestSkillListReturnsStableManifestSummaries(t *testing.T) {
+	tools := FeishuTools{Service: feishu.NewService(config.Config{}), SkillRegistry: testSkillRegistry{manifests: []skills.Manifest{
+		{Name: "zeta", Title: "Zeta skill", Description: "Read zeta docs", Capabilities: []string{"doc.read"}, Version: "9.9.9", Inputs: map[string]any{"type": "object"}, Steps: []skills.Step{{Tool: "feishu_doc_read"}}, Outputs: map[string]any{"type": "object"}},
+		{Name: "alpha", Title: "Alpha skill", Description: "Inspect alpha metadata", Capabilities: []string{"doc.metadata", "doc.permission.check"}, Version: "1.2.3", Inputs: map[string]any{"type": "object"}, Steps: []skills.Step{{Tool: "feishu_doc_get_metadata"}}, Outputs: map[string]any{"type": "object"}},
+	}}}
+
+	got, err := tools.CallTool(context.Background(), "feishu_skill_list", json.RawMessage([]byte(`{}`)))
+	if err != nil {
+		t.Fatalf("skill list returned error: %v", err)
+	}
+	result, ok := got.(SkillListResult)
+	if !ok {
+		t.Fatalf("result type = %T, want SkillListResult", got)
+	}
+	want := SkillListResult{Skills: []SkillSummary{
+		{Name: "alpha", Title: "Alpha skill", Description: "Inspect alpha metadata", Capabilities: []string{"doc.metadata", "doc.permission.check"}},
+		{Name: "zeta", Title: "Zeta skill", Description: "Read zeta docs", Capabilities: []string{"doc.read"}},
+	}}
+	if !reflect.DeepEqual(result, want) {
+		t.Fatalf("skill list = %#v, want %#v", result, want)
+	}
+	marshaled, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal result: %v", err)
+	}
+	if strings.Contains(string(marshaled), "skill.yaml") {
+		t.Fatalf("skill list exposed local filesystem details: %s", marshaled)
+	}
+}
+
+func TestSkillGetReturnsFullManifestSummaryByName(t *testing.T) {
+	tools := FeishuTools{Service: feishu.NewService(config.Config{}), SkillRegistry: testSkillRegistry{manifests: []skills.Manifest{{
+		Name: "doc-reader", Title: "Document reader", Description: "Read one document", Version: "1.0.0", Capabilities: []string{"doc.read"}, Write: false,
+		Inputs:  map[string]any{"type": "object", "properties": map[string]any{"input": map[string]any{"type": "string"}}},
+		Steps:   []skills.Step{{Tool: "feishu_doc_resolve", Args: map[string]any{"input": "${input}"}}},
+		Outputs: map[string]any{"type": "object"},
+	}}}}
+
+	got, err := tools.CallTool(context.Background(), "feishu_skill_get", json.RawMessage([]byte(`{"name":"doc-reader"}`)))
+	if err != nil {
+		t.Fatalf("skill get returned error: %v", err)
+	}
+	result, ok := got.(SkillGetResult)
+	if !ok {
+		t.Fatalf("result type = %T, want SkillGetResult", got)
+	}
+	if result.Skill.Name != "doc-reader" || result.Skill.Version != "1.0.0" || result.Skill.Write {
+		t.Fatalf("skill summary = %+v", result.Skill)
+	}
+	if !reflect.DeepEqual(result.Skill.Inputs, map[string]any{"type": "object", "properties": map[string]any{"input": map[string]any{"type": "string"}}}) {
+		t.Fatalf("inputs = %#v", result.Skill.Inputs)
+	}
+	if len(result.Skill.Steps) != 1 || result.Skill.Steps[0].Tool != "feishu_doc_resolve" || result.Skill.Steps[0].Args["input"] != "${input}" {
+		t.Fatalf("steps = %#v", result.Skill.Steps)
+	}
+	if !reflect.DeepEqual(result.Skill.Outputs, map[string]any{"type": "object"}) {
+		t.Fatalf("outputs = %#v", result.Skill.Outputs)
+	}
+}
+
+func TestSkillGetUnknownSkillReturnsStructuredMCPError(t *testing.T) {
+	tools := FeishuTools{Service: feishu.NewService(config.Config{}), SkillRegistry: testSkillRegistry{manifests: []skills.Manifest{{Name: "known", Inputs: map[string]any{"type": "object"}}}}}
+	_, err := tools.CallTool(context.Background(), "feishu_skill_get", json.RawMessage([]byte(`{"name":"missing"}`)))
+	if err == nil {
+		t.Fatal("expected unknown skill error")
+	}
+	var structured struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Name    string `json:"name"`
+	}
+	if decodeErr := json.Unmarshal([]byte(err.Error()), &structured); decodeErr != nil {
+		t.Fatalf("error %q was not structured JSON: %v", err.Error(), decodeErr)
+	}
+	if structured.Code != "skill_not_found" || structured.Name != "missing" || !strings.Contains(structured.Message, "missing") {
+		t.Fatalf("structured error = %+v", structured)
+	}
+}
+
 func TestCommentToolsCallHandlers(t *testing.T) {
 	var gotPaths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -424,6 +544,23 @@ func toolByName(t *testing.T, name string) *Tool {
 	}
 	t.Fatalf("%s not found", name)
 	return nil
+}
+
+type testSkillRegistry struct {
+	manifests []skills.Manifest
+}
+
+func (r testSkillRegistry) List() []skills.Manifest {
+	return append([]skills.Manifest(nil), r.manifests...)
+}
+
+func (r testSkillRegistry) Get(name string) (skills.Manifest, bool) {
+	for _, manifest := range r.manifests {
+		if manifest.Name == name {
+			return manifest, true
+		}
+	}
+	return skills.Manifest{}, false
 }
 
 type testActorTokenSource struct {
