@@ -11,20 +11,56 @@ import (
 	"time"
 )
 
+const (
+	defaultMaxBodyBytes     int64 = 16 * 1024 * 1024
+	defaultMaxBatchRequests       = 50
+)
+
 type HTTPServer struct {
-	server *Server
-	apiKey string
+	server               *Server
+	apiKey               string
+	allowUnauthenticated bool
+	allowedOrigins       []string
+	maxBodyBytes         int64
+	maxBatchRequests     int
+}
+
+type HTTPServerOptions struct {
+	APIKey               string
+	AllowUnauthenticated bool
+	AllowedOrigins       []string
+	MaxBodyBytes         int64
+	MaxBatchRequests     int
 }
 
 func NewHTTPServer(name, version string, handler Handler, apiKey string) *HTTPServer {
-	return &HTTPServer{server: NewServer(name, version, handler), apiKey: apiKey}
+	return NewHTTPServerWithOptions(name, version, handler, HTTPServerOptions{APIKey: apiKey})
+}
+
+func NewHTTPServerWithOptions(name, version string, handler Handler, opts HTTPServerOptions) *HTTPServer {
+	maxBodyBytes := opts.MaxBodyBytes
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = defaultMaxBodyBytes
+	}
+	maxBatchRequests := opts.MaxBatchRequests
+	if maxBatchRequests <= 0 {
+		maxBatchRequests = defaultMaxBatchRequests
+	}
+	return &HTTPServer{
+		server:               NewServer(name, version, handler),
+		apiKey:               opts.APIKey,
+		allowUnauthenticated: opts.AllowUnauthenticated,
+		allowedOrigins:       append([]string(nil), opts.AllowedOrigins...),
+		maxBodyBytes:         maxBodyBytes,
+		maxBatchRequests:     maxBatchRequests,
+	}
 }
 
 func (h *HTTPServer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", h.handleHealthz)
 	mux.HandleFunc("/mcp", h.handleMCP)
-	return withCORS(mux)
+	return h.withCORS(mux)
 }
 
 func (h *HTTPServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -44,9 +80,9 @@ func (h *HTTPServer) handleMCP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "missing or invalid bearer token"})
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 16*1024*1024))
+	body, err := readLimitedBody(r.Body, h.maxBodyBytes)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "request body too large"})
 		return
 	}
 	body = bytes.TrimSpace(body)
@@ -79,6 +115,10 @@ func (h *HTTPServer) handleBatch(ctx context.Context, w http.ResponseWriter, bod
 		writeJSON(w, http.StatusOK, Response{JSONRPC: "2.0", Error: &Error{Code: -32700, Message: "parse error", Data: err.Error()}})
 		return
 	}
+	if len(reqs) > h.maxBatchRequests {
+		writeJSON(w, http.StatusOK, Response{JSONRPC: "2.0", Error: &Error{Code: -32600, Message: "invalid request", Data: "batch request limit exceeded"}})
+		return
+	}
 	responses := make([]Response, 0, len(reqs))
 	for _, req := range reqs {
 		if len(req.ID) == 0 {
@@ -96,7 +136,7 @@ func (h *HTTPServer) handleBatch(ctx context.Context, w http.ResponseWriter, bod
 
 func (h *HTTPServer) authorized(r *http.Request) bool {
 	if h.apiKey == "" {
-		return true
+		return h.allowUnauthenticated
 	}
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
 	const prefix = "Bearer "
@@ -113,11 +153,43 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func withCORS(next http.Handler) http.Handler {
+func readLimitedBody(body io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxBodyBytes
+	}
+	limited := io.LimitReader(body, maxBytes+1)
+	raw, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > maxBytes {
+		return nil, http.ErrBodyReadAfterClose
+	}
+	return raw, nil
+}
+
+func (h *HTTPServer) withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, MCP-Protocol-Version")
+		if origin := h.allowedOrigin(r.Header.Get("Origin")); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, MCP-Protocol-Version")
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (h *HTTPServer) allowedOrigin(origin string) string {
+	origin = strings.TrimSpace(origin)
+	if origin == "" {
+		return ""
+	}
+	for _, allowed := range h.allowedOrigins {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == "*" || allowed == origin {
+			return origin
+		}
+	}
+	return ""
 }

@@ -59,7 +59,7 @@ func TestCheckPermissionCallMapsInputAndCredentialIDToService(t *testing.T) {
 		APIMaxRetries:              0,
 	})
 	svc.SetTokenSource(testActorTokenSource{tokens: map[string]string{"cred-1": "user-token"}})
-	tools := FeishuTools{Service: svc}
+	tools := FeishuTools{Service: svc, AllowCredentialSelection: true}
 
 	got, err := tools.CallTool(context.Background(), "feishu_doc_check_permission", json.RawMessage([]byte(`{"input":"doc-token","credentialId":"cred-1"}`)))
 	if err != nil {
@@ -243,20 +243,29 @@ func TestOAuthAuthURLValidationRejectsCallerRedirectURIWhenNoneConfigured(t *tes
 	}
 }
 
-func TestFeishuDocReadAcceptsCredentialID(t *testing.T) {
+func TestFeishuDocReadRejectsCredentialIDWhenCredentialSelectionDisabled(t *testing.T) {
 	tools := FeishuTools{Service: feishu.NewService(testOAuthToolConfig())}
+	args := json.RawMessage([]byte(`{"input":"doc-token","credentialId":"cred-1"}`))
+	_, err := tools.CallTool(context.Background(), "feishu_doc_read", args)
+	if err == nil || !strings.Contains(err.Error(), "credentialId is disabled") {
+		t.Fatalf("error = %v, want credentialId disabled error", err)
+	}
+}
+
+func TestFeishuDocReadAcceptsCredentialIDWhenCredentialSelectionEnabled(t *testing.T) {
+	tools := FeishuTools{Service: feishu.NewService(testOAuthToolConfig()), AllowCredentialSelection: true}
 	args := json.RawMessage([]byte(`{"input":"doc-token","credentialId":"cred-1"}`))
 	_, err := tools.CallTool(context.Background(), "feishu_doc_read", args)
 	if err == nil {
 		t.Fatal("expected upstream/auth error after credentialId decodes")
 	}
-	if strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("credentialId was rejected as an unknown field: %v", err)
+	if strings.Contains(err.Error(), "unknown field") || strings.Contains(err.Error(), "credentialId is disabled") {
+		t.Fatalf("credentialId was rejected before service handling: %v", err)
 	}
 }
 
 func TestFeishuDocReadRejectsOverlongCredentialID(t *testing.T) {
-	tools := FeishuTools{Service: feishu.NewService(testOAuthToolConfig())}
+	tools := FeishuTools{Service: feishu.NewService(testOAuthToolConfig()), AllowCredentialSelection: true}
 	args, err := json.Marshal(map[string]any{"input": "doc-token", "credentialId": strings.Repeat("a", 129)})
 	if err != nil {
 		t.Fatalf("Marshal args: %v", err)

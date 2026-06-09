@@ -8,6 +8,10 @@ import (
 func TestLoadOAuthConfigDefaults(t *testing.T) {
 	t.Setenv("FEISHU_PROVIDER", "")
 	t.Setenv("FEISHU_BASE_URL", "")
+	t.Setenv("MCP_ALLOW_UNAUTHENTICATED", "")
+	t.Setenv("MCP_ALLOWED_ORIGINS", "")
+	t.Setenv("MCP_MAX_BODY_BYTES", "")
+	t.Setenv("MCP_MAX_BATCH_REQUESTS", "")
 	t.Setenv("FEISHU_OAUTH_REDIRECT_URI", "")
 	t.Setenv("FEISHU_OAUTH_SCOPES", "")
 	t.Setenv("FEISHU_OAUTH_STATE_SECRET", "")
@@ -44,6 +48,18 @@ func TestLoadOAuthConfigDefaults(t *testing.T) {
 	if cfg.TokenEncryptKey != "" {
 		t.Fatalf("TokenEncryptKey = %q, want empty", cfg.TokenEncryptKey)
 	}
+	if cfg.MCPAllowUnauthenticated {
+		t.Fatal("MCPAllowUnauthenticated = true, want false by default")
+	}
+	if len(cfg.MCPAllowedOrigins) != 0 {
+		t.Fatalf("MCPAllowedOrigins = %#v, want empty", cfg.MCPAllowedOrigins)
+	}
+	if cfg.MCPMaxBodyBytes != 16*1024*1024 {
+		t.Fatalf("MCPMaxBodyBytes = %d", cfg.MCPMaxBodyBytes)
+	}
+	if cfg.MCPMaxBatchRequests != 50 {
+		t.Fatalf("MCPMaxBatchRequests = %d", cfg.MCPMaxBatchRequests)
+	}
 }
 
 func TestLoadOAuthScopesTrimsAndDropsEmptyValues(t *testing.T) {
@@ -54,6 +70,50 @@ func TestLoadOAuthScopesTrimsAndDropsEmptyValues(t *testing.T) {
 	want := []string{"offline_access", "docs:doc:readonly", "drive:drive:readonly"}
 	if !reflect.DeepEqual(cfg.OAuthScopes, want) {
 		t.Fatalf("OAuthScopes = %#v, want %#v", cfg.OAuthScopes, want)
+	}
+}
+
+func TestLoadMCPSecurityOverrides(t *testing.T) {
+	t.Setenv("MCP_ALLOW_UNAUTHENTICATED", "true")
+	t.Setenv("MCP_ALLOWED_ORIGINS", " https://chat.openai.com, https://example.test ")
+	t.Setenv("MCP_MAX_BODY_BYTES", "4096")
+	t.Setenv("MCP_MAX_BATCH_REQUESTS", "3")
+
+	cfg := Load()
+
+	if !cfg.MCPAllowUnauthenticated {
+		t.Fatal("MCPAllowUnauthenticated = false, want true")
+	}
+	wantOrigins := []string{"https://chat.openai.com", "https://example.test"}
+	if !reflect.DeepEqual(cfg.MCPAllowedOrigins, wantOrigins) {
+		t.Fatalf("MCPAllowedOrigins = %#v, want %#v", cfg.MCPAllowedOrigins, wantOrigins)
+	}
+	if cfg.MCPMaxBodyBytes != 4096 {
+		t.Fatalf("MCPMaxBodyBytes = %d", cfg.MCPMaxBodyBytes)
+	}
+	if cfg.MCPMaxBatchRequests != 3 {
+		t.Fatalf("MCPMaxBatchRequests = %d", cfg.MCPMaxBatchRequests)
+	}
+}
+
+func TestValidateRemoteMCPSecurityRejectsPlaintextTokenStore(t *testing.T) {
+	cfg := Config{TokenStorePath: ".data/feishu_tokens.json", TokenEncryptKey: ""}
+	if err := cfg.ValidateRemoteMCPSecurity(); err == nil {
+		t.Fatal("expected plaintext token store to be rejected for remote MCP")
+	}
+}
+
+func TestValidateRemoteMCPSecurityAllowsDisabledTokenStore(t *testing.T) {
+	cfg := Config{TokenStorePath: "", TokenEncryptKey: ""}
+	if err := cfg.ValidateRemoteMCPSecurity(); err != nil {
+		t.Fatalf("ValidateRemoteMCPSecurity returned error: %v", err)
+	}
+}
+
+func TestValidateRemoteMCPSecurityAllowsEncryptedTokenStore(t *testing.T) {
+	cfg := Config{TokenStorePath: ".data/feishu_tokens.json", TokenEncryptKey: "12345678901234567890123456789012"}
+	if err := cfg.ValidateRemoteMCPSecurity(); err != nil {
+		t.Fatalf("ValidateRemoteMCPSecurity returned error: %v", err)
 	}
 }
 

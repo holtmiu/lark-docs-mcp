@@ -20,7 +20,7 @@ func main() {
 
 	cfg := config.Load()
 	service := feishu.NewService(cfg)
-	server := mcp.NewServer("feishu-doc-mcp-server", version, mcp.FeishuTools{Service: service})
+	server := mcp.NewServer("feishu-doc-mcp-server", version, mcp.FeishuTools{Service: service, AllowCredentialSelection: true})
 	if err := server.Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)

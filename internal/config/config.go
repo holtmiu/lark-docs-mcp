@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"strconv"
@@ -37,6 +38,10 @@ type Config struct {
 	DocxCreatePath                 string
 	MCPHTTPAddr                    string
 	MCPServerAPIKey                string
+	MCPAllowUnauthenticated        bool
+	MCPAllowedOrigins              []string
+	MCPMaxBodyBytes                int
+	MCPMaxBatchRequests            int
 	OAuthRedirectURI               string
 	OAuthScopes                    []string
 	OAuthStateSecret               string
@@ -78,6 +83,10 @@ func Load() Config {
 		DocxCreatePath:                 getenv("FEISHU_DOCX_CREATE_PATH", "/open-apis/docx/v1/documents"),
 		MCPHTTPAddr:                    getenv("MCP_HTTP_ADDR", ":8080"),
 		MCPServerAPIKey:                os.Getenv("MCP_SERVER_API_KEY"),
+		MCPAllowUnauthenticated:        getenvBool("MCP_ALLOW_UNAUTHENTICATED", false),
+		MCPAllowedOrigins:              getenvList("MCP_ALLOWED_ORIGINS", ""),
+		MCPMaxBodyBytes:                getenvInt("MCP_MAX_BODY_BYTES", 16*1024*1024),
+		MCPMaxBatchRequests:            getenvInt("MCP_MAX_BATCH_REQUESTS", 50),
 		OAuthRedirectURI:               getenv("FEISHU_OAUTH_REDIRECT_URI", ""),
 		OAuthScopes:                    getenvList("FEISHU_OAUTH_SCOPES", "offline_access,docs:doc:readonly,docs:doc:write,drive:drive:readonly"),
 		OAuthStateSecret:               getenv("FEISHU_OAUTH_STATE_SECRET", ""),
@@ -87,6 +96,20 @@ func Load() Config {
 		TokenStorePath:                 getenv("FEISHU_TOKEN_STORE_PATH", ".data/feishu_tokens.json"),
 		TokenEncryptKey:                getenv("FEISHU_TOKEN_ENCRYPT_KEY", ""),
 	}
+}
+
+func (c Config) ValidateRemoteMCPSecurity() error {
+	if strings.TrimSpace(c.TokenStorePath) == "" {
+		return nil
+	}
+	key := strings.TrimSpace(c.TokenEncryptKey)
+	if key == "" {
+		return fmt.Errorf("FEISHU_TOKEN_ENCRYPT_KEY is required when FEISHU_TOKEN_STORE_PATH is enabled for remote MCP")
+	}
+	if len([]byte(key)) != 16 && len([]byte(key)) != 24 && len([]byte(key)) != 32 {
+		return fmt.Errorf("FEISHU_TOKEN_ENCRYPT_KEY must be 16, 24, or 32 bytes when configured for remote MCP")
+	}
+	return nil
 }
 
 func safeBaseURL(raw, fallback string) string {

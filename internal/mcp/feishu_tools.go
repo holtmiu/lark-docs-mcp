@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/holtmiu/ChatGPT_MCP_Connectors/internal/feishu"
 )
 
 type FeishuTools struct {
-	Service *feishu.Service
+	Service                  *feishu.Service
+	AllowCredentialSelection bool
 }
 
 func (t FeishuTools) Tools() []Tool {
@@ -127,7 +129,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		if err := decodeArgs(args, &req); err != nil {
 			return nil, err
 		}
-		if err := validateCredentialID(req.CredentialID); err != nil {
+		if err := t.validateCredentialID(req.CredentialID); err != nil {
 			return nil, err
 		}
 		return t.Service.GetMetadataWithActor(ctx, req.Input, feishu.ActorContext{CredentialID: req.CredentialID})
@@ -142,7 +144,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		if len(req.Input) > 2048 {
 			return nil, fmt.Errorf("input exceeds max length 2048")
 		}
-		if err := validateCredentialID(req.CredentialID); err != nil {
+		if err := t.validateCredentialID(req.CredentialID); err != nil {
 			return nil, err
 		}
 		return t.Service.CheckPermissionWithActor(ctx, req.Input, feishu.ActorContext{CredentialID: req.CredentialID})
@@ -158,7 +160,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		if err := decodeArgs(args, &req); err != nil {
 			return nil, err
 		}
-		if err := validateCredentialID(req.CredentialID); err != nil {
+		if err := t.validateCredentialID(req.CredentialID); err != nil {
 			return nil, err
 		}
 		return t.Service.ReadDocumentWithActor(ctx, req.Input, feishu.ReadOptions{Format: req.Format, MaxBlocks: req.MaxBlocks, MaxDepth: req.MaxDepth, IncludeUnsupportedRaw: req.IncludeUnsupportedRaw}, feishu.ActorContext{CredentialID: req.CredentialID})
@@ -174,7 +176,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		if err := decodeArgs(args, &req); err != nil {
 			return nil, err
 		}
-		if err := validateCredentialID(req.CredentialID); err != nil {
+		if err := t.validateCredentialID(req.CredentialID); err != nil {
 			return nil, err
 		}
 		return t.Service.CreateDocumentWithActor(ctx, feishu.CreateDocumentRequest{Title: req.Title, FolderToken: req.FolderToken, Markdown: req.Markdown, DryRun: req.DryRun, OperationID: req.OperationID}, feishu.ActorContext{CredentialID: req.CredentialID})
@@ -190,7 +192,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		if err := decodeArgs(args, &req); err != nil {
 			return nil, err
 		}
-		if err := validateCredentialID(req.CredentialID); err != nil {
+		if err := t.validateCredentialID(req.CredentialID); err != nil {
 			return nil, err
 		}
 		return t.Service.AppendDocumentWithActor(ctx, req.Input, feishu.AppendRequest{Markdown: req.Markdown, AfterBlockID: req.AfterBlockID, DryRun: req.DryRun, OperationID: req.OperationID}, feishu.ActorContext{CredentialID: req.CredentialID})
@@ -207,7 +209,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		if err := validateDocumentInput(req.Input); err != nil {
 			return nil, err
 		}
-		if err := validateCredentialID(req.CredentialID); err != nil {
+		if err := t.validateCredentialID(req.CredentialID); err != nil {
 			return nil, err
 		}
 		return t.Service.ListComments(ctx, req.Input, feishu.ListCommentsRequest{PageSize: req.PageSize, PageToken: req.PageToken}, feishu.ActorContext{CredentialID: req.CredentialID})
@@ -227,7 +229,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		if err := validateDocumentInput(req.Input); err != nil {
 			return nil, err
 		}
-		if err := validateCredentialID(req.CredentialID); err != nil {
+		if err := t.validateCredentialID(req.CredentialID); err != nil {
 			return nil, err
 		}
 		return t.Service.CreateComment(ctx, req.Input, feishu.CreateCommentRequest{Content: req.Content, BlockID: req.BlockID, Quote: req.Quote, DryRun: req.DryRun, OperationID: req.OperationID}, feishu.ActorContext{CredentialID: req.CredentialID})
@@ -246,7 +248,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		if err := validateDocumentInput(req.Input); err != nil {
 			return nil, err
 		}
-		if err := validateCredentialID(req.CredentialID); err != nil {
+		if err := t.validateCredentialID(req.CredentialID); err != nil {
 			return nil, err
 		}
 		if len(req.CommentID) > 256 {
@@ -268,7 +270,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		if err := validateDocumentInput(req.Input); err != nil {
 			return nil, err
 		}
-		if err := validateCredentialID(req.CredentialID); err != nil {
+		if err := t.validateCredentialID(req.CredentialID); err != nil {
 			return nil, err
 		}
 		if len(req.CommentID) > 256 {
@@ -301,6 +303,16 @@ func decodeArgs(raw json.RawMessage, out any) error {
 func validateCredentialID(value string) error {
 	if len(value) > 128 {
 		return fmt.Errorf("credentialId exceeds max length 128")
+	}
+	return nil
+}
+
+func (t FeishuTools) validateCredentialID(value string) error {
+	if err := validateCredentialID(value); err != nil {
+		return err
+	}
+	if strings.TrimSpace(value) != "" && !t.AllowCredentialSelection {
+		return fmt.Errorf("credentialId is disabled for this MCP server")
 	}
 	return nil
 }

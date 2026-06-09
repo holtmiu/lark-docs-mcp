@@ -21,8 +21,18 @@ func main() {
 	defer stop()
 
 	cfg := config.Load()
+	if err := cfg.ValidateRemoteMCPSecurity(); err != nil {
+		fmt.Fprintf(os.Stderr, "security configuration error: %v\n", err)
+		os.Exit(1)
+	}
 	service := feishu.NewService(cfg)
-	h := mcp.NewHTTPServer("feishu-doc-mcp-http-server", version, mcp.FeishuTools{Service: service}, cfg.MCPServerAPIKey)
+	h := mcp.NewHTTPServerWithOptions("feishu-doc-mcp-http-server", version, mcp.FeishuTools{Service: service}, mcp.HTTPServerOptions{
+		APIKey:               cfg.MCPServerAPIKey,
+		AllowUnauthenticated: cfg.MCPAllowUnauthenticated,
+		AllowedOrigins:       cfg.MCPAllowedOrigins,
+		MaxBodyBytes:         int64(cfg.MCPMaxBodyBytes),
+		MaxBatchRequests:     cfg.MCPMaxBatchRequests,
+	})
 	server := &http.Server{
 		Addr:              cfg.MCPHTTPAddr,
 		Handler:           h.Handler(),
