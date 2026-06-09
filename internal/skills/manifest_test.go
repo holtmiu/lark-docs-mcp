@@ -89,6 +89,78 @@ func TestParseManifestWriteCapabilityWithoutWriteTrueFails(t *testing.T) {
 	}
 }
 
+func TestParseManifestWriteStepToolWithoutWriteTrueFails(t *testing.T) {
+	writeTools := []string{
+		"feishu_doc_create",
+		"feishu_doc_append",
+		"feishu_doc_create_comment",
+		"feishu_doc_reply_comment",
+		"feishu_doc_resolve_comment",
+	}
+
+	for _, tool := range writeTools {
+		t.Run(tool, func(t *testing.T) {
+			manifest := strings.Replace(validManifest(t), "tool: feishu_doc_read", "tool: "+tool, 1)
+
+			_, err := ParseManifest([]byte(manifest))
+			if err == nil {
+				t.Fatal("ParseManifest succeeded, want write step tool error")
+			}
+			if !strings.Contains(err.Error(), "write") || !strings.Contains(err.Error(), tool) {
+				t.Fatalf("error = %q, want mention write step tool", err.Error())
+			}
+		})
+	}
+}
+
+func TestParseManifestMultipleYAMLDocumentsFails(t *testing.T) {
+	manifest := validManifest(t) + "\n---\n" + validManifest(t)
+
+	_, err := ParseManifest([]byte(manifest))
+	if err == nil {
+		t.Fatal("ParseManifest succeeded, want multiple YAML documents error")
+	}
+	if !strings.Contains(err.Error(), "multiple") {
+		t.Fatalf("error = %q, want mention multiple documents", err.Error())
+	}
+}
+
+func TestParseManifestTooLargeFails(t *testing.T) {
+	manifest := validManifest(t) + strings.Repeat("# padding\n", maxManifestBytes)
+
+	_, err := ParseManifest([]byte(manifest))
+	if err == nil {
+		t.Fatal("ParseManifest succeeded, want manifest size error")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("error = %q, want mention size limit", err.Error())
+	}
+}
+
+func TestParseManifestInvalidCapabilityFails(t *testing.T) {
+	manifest := strings.Replace(validManifest(t), "- doc.read", "- doc.delete", 1)
+
+	_, err := ParseManifest([]byte(manifest))
+	if err == nil {
+		t.Fatal("ParseManifest succeeded, want invalid capability error")
+	}
+	if !strings.Contains(err.Error(), "capability") || !strings.Contains(err.Error(), "doc.delete") {
+		t.Fatalf("error = %q, want mention invalid capability", err.Error())
+	}
+}
+
+func TestParseManifestUnknownTopLevelFieldFails(t *testing.T) {
+	manifest := strings.Replace(validManifest(t), "version: 0.1.0\n", "version: 0.1.0\nunknown: true\n", 1)
+
+	_, err := ParseManifest([]byte(manifest))
+	if err == nil {
+		t.Fatal("ParseManifest succeeded, want unknown field error")
+	}
+	if !strings.Contains(err.Error(), "unknown") {
+		t.Fatalf("error = %q, want mention unknown field", err.Error())
+	}
+}
+
 func TestParseManifestInputSchemaMustBeObject(t *testing.T) {
 	manifest := strings.Replace(validManifest(t), "type: object", "type: string", 1)
 

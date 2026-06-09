@@ -3,10 +3,13 @@ package skills
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"sort"
 
 	"gopkg.in/yaml.v3"
 )
+
+const maxManifestBytes = 1 << 20
 
 // Manifest describes a reusable skill workflow loaded from a local manifest.
 type Manifest struct {
@@ -60,13 +63,32 @@ var writeCapabilities = map[string]struct{}{
 	"doc.comment.resolve": {},
 }
 
+var writeStepTools = map[string]struct{}{
+	"feishu_doc_create":          {},
+	"feishu_doc_append":          {},
+	"feishu_doc_create_comment":  {},
+	"feishu_doc_reply_comment":   {},
+	"feishu_doc_resolve_comment": {},
+}
+
 // ParseManifest parses and validates a YAML skill manifest into typed structs.
 func ParseManifest(data []byte) (Manifest, error) {
+	if len(data) > maxManifestBytes {
+		return Manifest{}, fmt.Errorf("skill manifest too large: %d bytes exceeds limit %d", len(data), maxManifestBytes)
+	}
+
 	var manifest Manifest
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&manifest); err != nil {
 		return Manifest{}, fmt.Errorf("parse skill manifest: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return Manifest{}, fmt.Errorf("parse skill manifest: %w", err)
+		}
+		return Manifest{}, fmt.Errorf("skill manifest must contain exactly one YAML document; multiple documents are not allowed")
 	}
 	if err := manifest.Validate(); err != nil {
 		return Manifest{}, err
@@ -100,6 +122,9 @@ func (m Manifest) Validate() error {
 		if !isAllowedStepTool(step.Tool) {
 			return fmt.Errorf("skill manifest steps[%d].tool %q is not allowed; allowed tools: %v", i, step.Tool, sortedKeys(allowedStepTools))
 		}
+		if isWriteStepTool(step.Tool) && !m.Write {
+			return fmt.Errorf("skill manifest steps[%d].tool %q requires write: true", i, step.Tool)
+		}
 	}
 	return nil
 }
@@ -116,6 +141,11 @@ func isAllowedCapability(capability string) bool {
 
 func isWriteCapability(capability string) bool {
 	_, ok := writeCapabilities[capability]
+	return ok
+}
+
+func isWriteStepTool(tool string) bool {
+	_, ok := writeStepTools[tool]
 	return ok
 }
 
