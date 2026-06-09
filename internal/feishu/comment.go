@@ -43,7 +43,7 @@ func (s *Service) ListComments(ctx context.Context, input string, req ListCommen
 		pathTemplate = "/open-apis/drive/v1/files/%s/comments"
 	}
 	path := fmt.Sprintf(pathTemplate, url.PathEscape(identity.Token))
-	query := url.Values{}
+	query := docxFileTypeQuery()
 	if req.PageSize > 0 {
 		query.Set("page_size", fmt.Sprintf("%d", req.PageSize))
 	}
@@ -82,7 +82,7 @@ func (s *Service) CreateComment(ctx context.Context, input string, req CreateCom
 		}
 		path := fmt.Sprintf(pathTemplate, url.PathEscape(identity.Token))
 		var raw map[string]any
-		err := s.client.PostJSONWithActor(ctx, path, body, &raw, actor)
+		err := s.client.doJSON(ctx, http.MethodPost, path, docxFileTypeQuery(), body, &raw, true, actor)
 		return raw, err
 	})
 }
@@ -115,7 +115,7 @@ func (s *Service) ReplyComment(ctx context.Context, input string, commentID stri
 		}
 		path := fmt.Sprintf(pathTemplate, url.PathEscape(identity.Token), url.PathEscape(commentID))
 		var raw map[string]any
-		err := s.client.PostJSONWithActor(ctx, path, body, &raw, actor)
+		err := s.client.doJSON(ctx, http.MethodPost, path, docxFileTypeQuery(), body, &raw, true, actor)
 		return raw, err
 	})
 }
@@ -145,7 +145,7 @@ func (s *Service) ResolveComment(ctx context.Context, input string, commentID st
 		}
 		path := fmt.Sprintf(pathTemplate, url.PathEscape(identity.Token), url.PathEscape(commentID))
 		var raw map[string]any
-		err := s.client.doJSON(ctx, http.MethodPatch, path, nil, body, &raw, true, actor)
+		err := s.client.doJSON(ctx, http.MethodPatch, path, docxFileTypeQuery(), body, &raw, true, actor)
 		return raw, err
 	})
 }
@@ -177,8 +177,31 @@ func (s *Service) executeCommentMutation(ctx context.Context, identity DocumentI
 	return result, nil
 }
 
+func docxFileTypeQuery() url.Values {
+	query := url.Values{}
+	query.Set("file_type", "docx")
+	return query
+}
+
 func buildCreateCommentBody(req CreateCommentRequest) map[string]any {
-	body := map[string]any{"content": strings.TrimSpace(req.Content)}
+	body := map[string]any{
+		"reply_list": map[string]any{
+			"replies": []map[string]any{
+				{
+					"content": map[string]any{
+						"elements": []map[string]any{
+							{
+								"type": "text_run",
+								"text_run": map[string]any{
+									"text": strings.TrimSpace(req.Content),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 	if strings.TrimSpace(req.BlockID) != "" {
 		body["block_id"] = strings.TrimSpace(req.BlockID)
 	}

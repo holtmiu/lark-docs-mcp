@@ -44,6 +44,37 @@ func TestPermissionAllowedResponseMapsCapabilities(t *testing.T) {
 	}
 }
 
+func TestPermissionFeishuPublicResponseMapsCommentCapability(t *testing.T) {
+	svc, _, closeServer := newPermissionTestService(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0,
+			"data": map[string]any{
+				"permission_public": map[string]any{
+					"comment_entity":    "anyone_can_view",
+					"external_access":   true,
+					"invite_external":   true,
+					"link_share_entity": "tenant_readable",
+					"lock_switch":       false,
+					"security_entity":   "anyone_can_view",
+					"share_entity":      "anyone",
+				},
+			},
+		})
+	})
+	defer closeServer()
+
+	got, err := svc.CheckPermission(context.Background(), "doc-token")
+	if err != nil {
+		t.Fatalf("CheckPermission returned error: %v", err)
+	}
+	if !got.CanRead || got.CanWrite || !got.CanComment {
+		t.Fatalf("snapshot = %+v, want Feishu public view/comment capability without edit permission", got)
+	}
+	if got.Visibility != "tenant_readable" {
+		t.Fatalf("Visibility = %q", got.Visibility)
+	}
+}
+
 func TestPermissionDeniedResponseMapsPermissionDeniedSnapshot(t *testing.T) {
 	svc, _, closeServer := newPermissionTestService(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

@@ -94,9 +94,35 @@ Observed error:
 
 The permission preflight result for the target reported that write/comment permission was not available to the configured provider actor. The skill executor therefore stopped before sending the real comment mutation, which confirms the A5 write-safety gate fails closed under this provider permission state.
 
+## Unblocked Real Write Skill E2E
+
+After listing the actor-visible Feishu Drive documents, the validation reused an existing temporary docx target with title prefix `lark-docs-mcp skill e2e`.
+
+Root cause of the earlier blocker:
+
+- The Feishu public permission endpoint returned `data.permission_public` with fields such as `comment_entity=anyone_can_view` and `link_share_entity=tenant_readable`.
+- The connector only mapped boolean capability fields such as `can_read`, `can_write`, and `can_comment`, so it conservatively interpreted the target as not commentable.
+- Direct Feishu comment creation against the same target succeeded, confirming this was an adapter compatibility issue rather than a provider-side permission blocker.
+
+Fixes applied:
+
+- Map Feishu `permission_public` responses to read/comment capability snapshots while preserving `canWrite:false` for non-editable public/commentable documents.
+- Send Drive comment requests with `file_type=docx`.
+- Use Feishu's required full-document comment payload shape under `reply_list.replies[].content.elements[]`.
+
+Validation after fix:
+
+- `go test ./...`: PASS.
+- `go vet ./...`: PASS.
+- `go build ./cmd/feishu-doc-mcp-http-server`: PASS.
+- `feishu_doc_check_permission` on the selected real docx: PASS, returned `canRead:true`, `canComment:true`, `canWrite:false`, `visibility:tenant_readable`.
+- `feishu_skill_run` for `add-review-comment` with top-level `dryRun:false`: PASS.
+- Returned skill result included two steps and a non-empty Feishu comment ID, redacted here.
+- Direct comment list verification found the newly created skill comment on the target document.
+
 ## Current Phase Status
 
-A7 is partially validated but not complete.
+A7 is complete.
 
 Completed:
 
@@ -106,11 +132,5 @@ Completed:
 - Real read-only built-in skill execution against a real Feishu docx.
 - Write skill dry-run execution against a real Feishu docx.
 - Real write path fail-closed verification when permission preflight denies mutation.
-
-Blocked:
-
-- A successful real `dryRun:false` `add-review-comment` skill mutation could not be completed because the configured Feishu actor did not pass the permission preflight for the temporary document target.
-
-Required next step:
-
-- Provide or configure a Feishu document/folder target for which the configured actor passes `feishu_doc_check_permission` with comment/write permission, then rerun the real `dryRun:false` `add-review-comment` skill path and update this log.
+- Adapter fix for Feishu public permission snapshots and docx comment payload/query requirements.
+- Successful real `dryRun:false` `add-review-comment` skill mutation against a real Feishu docx, verified by listing comments.

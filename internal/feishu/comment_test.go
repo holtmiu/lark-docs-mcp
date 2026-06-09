@@ -159,6 +159,9 @@ func TestCommentCreateBodyDryRunAndPermissionGate(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"can_read": true, "can_write": true, "can_comment": true}})
 		case "/comments/doc-token":
 			mutationCalls++
+			if r.URL.Query().Get("file_type") != "docx" {
+				t.Fatalf("create comment file_type = %q, want docx", r.URL.Query().Get("file_type"))
+			}
 			if r.Method != http.MethodPost {
 				t.Fatalf("create method = %s, want POST", r.Method)
 			}
@@ -166,7 +169,20 @@ func TestCommentCreateBodyDryRunAndPermissionGate(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode create body: %v", err)
 			}
-			if body["content"] != "hello" || body["block_id"] != "blk/1" || body["quote"] != "quoted" {
+			replyList, _ := body["reply_list"].(map[string]any)
+			replies, _ := replyList["replies"].([]any)
+			if len(replies) != 1 {
+				t.Fatalf("create body replies = %#v", body)
+			}
+			reply, _ := replies[0].(map[string]any)
+			content, _ := reply["content"].(map[string]any)
+			elements, _ := content["elements"].([]any)
+			if len(elements) != 1 {
+				t.Fatalf("create body elements = %#v", body)
+			}
+			element, _ := elements[0].(map[string]any)
+			textRun, _ := element["text_run"].(map[string]any)
+			if element["type"] != "text_run" || textRun["text"] != "hello" || body["block_id"] != "blk/1" || body["quote"] != "quoted" {
 				t.Fatalf("create body = %#v", body)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"comment": map[string]any{"comment_id": "c-1", "content": "hello"}}})

@@ -56,6 +56,9 @@ func permissionSnapshotFromRaw(raw map[string]any) PermissionSnapshot {
 	data := asMap(raw["data"])
 	perm := firstMap(data, "permission", "permissions", "capability", "capabilities")
 	if len(perm) == 0 {
+		perm = firstMap(data, "permission_public", "permissionPublic")
+	}
+	if len(perm) == 0 {
 		perm = data
 	}
 	if len(perm) == 0 {
@@ -66,9 +69,15 @@ func permissionSnapshotFromRaw(raw map[string]any) PermissionSnapshot {
 		CanRead:        firstBool(perm, "can_read", "canRead", "readable", "can_view", "canView"),
 		CanWrite:       firstBool(perm, "can_write", "canWrite", "editable", "can_edit", "canEdit"),
 		CanComment:     firstBool(perm, "can_comment", "canComment", "commentable", "can_add_comment", "canAddComment"),
-		Visibility:     firstString(perm, "visibility", "share_level", "shareLevel"),
+		Visibility:     firstString(perm, "visibility", "share_level", "shareLevel", "link_share_entity", "linkShareEntity"),
 		Reason:         firstString(perm, "reason", "deny_reason", "denyReason", "msg", "message"),
 		RequiredScopes: firstStringSlice(perm, "required_scopes", "requiredScopes", "scopes"),
+	}
+	if !snapshot.CanRead {
+		snapshot.CanRead = feishuPublicEntityAllowsView(firstString(perm, "link_share_entity", "linkShareEntity", "security_entity", "securityEntity", "share_entity", "shareEntity"))
+	}
+	if !snapshot.CanComment {
+		snapshot.CanComment = feishuPublicEntityAllowsComment(firstString(perm, "comment_entity", "commentEntity"), snapshot.CanRead)
 	}
 	if !snapshot.CanRead || !snapshot.CanWrite || !snapshot.CanComment {
 		snapshot.SuggestedAction = firstString(perm, "suggested_action", "suggestedAction")
@@ -88,6 +97,26 @@ func permissionDeniedError(operation string, snapshot PermissionSnapshot) *Conne
 		message = "permission denied"
 	}
 	return newError(ErrPermissionDenied, fmt.Sprintf("%s requires write permission: %s", operation, message), nil)
+}
+
+func feishuPublicEntityAllowsView(entity string) bool {
+	switch strings.ToLower(strings.TrimSpace(entity)) {
+	case "tenant_readable", "anyone", "anyone_can_view", "anyone_readable", "partner_readable":
+		return true
+	default:
+		return false
+	}
+}
+
+func feishuPublicEntityAllowsComment(entity string, canRead bool) bool {
+	switch strings.ToLower(strings.TrimSpace(entity)) {
+	case "anyone_can_view", "tenant_readable", "anyone", "anyone_readable", "partner_readable":
+		return canRead
+	case "anyone_can_edit", "tenant_editable", "anyone_editable":
+		return true
+	default:
+		return false
+	}
 }
 
 func firstBool(parent map[string]any, keys ...string) bool {
