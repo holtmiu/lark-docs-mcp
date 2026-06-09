@@ -326,7 +326,7 @@ func TestResolveCommentToolRejectsMissingResolved(t *testing.T) {
 	}
 }
 
-func TestToolsListIncludesSkillDiscoveryWhenRegistryConfigured(t *testing.T) {
+func TestToolsListIncludesSkillToolsWhenRegistryConfigured(t *testing.T) {
 	handler := FeishuTools{Service: feishu.NewService(config.Config{}), SkillRegistry: testSkillRegistry{}}
 	server := NewServer("test", "dev", handler)
 	resp := server.HandleRequest(context.Background(), Request{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/list"})
@@ -344,23 +344,23 @@ func TestToolsListIncludesSkillDiscoveryWhenRegistryConfigured(t *testing.T) {
 	names := map[string]bool{}
 	for _, tool := range tools {
 		names[tool.Name] = true
-		if tool.Name == "feishu_skill_list" || tool.Name == "feishu_skill_get" {
+		if tool.Name == "feishu_skill_list" || tool.Name == "feishu_skill_get" || tool.Name == "feishu_skill_run" {
 			if !strings.Contains(strings.ToLower(tool.Description), "read-only") {
 				t.Fatalf("%s description should make read-only behavior clear: %q", tool.Name, tool.Description)
 			}
 		}
 	}
-	for _, name := range []string{"feishu_skill_list", "feishu_skill_get"} {
+	for _, name := range []string{"feishu_skill_list", "feishu_skill_get", "feishu_skill_run"} {
 		if !names[name] {
 			t.Fatalf("%s not found in tools/list: %#v", name, tools)
 		}
 	}
 }
 
-func TestToolsOmitsSkillDiscoveryWhenRegistryNotConfigured(t *testing.T) {
+func TestToolsOmitsSkillToolsWhenRegistryNotConfigured(t *testing.T) {
 	tools := FeishuTools{Service: feishu.NewService(config.Config{})}.Tools()
 	for _, tool := range tools {
-		if tool.Name == "feishu_skill_list" || tool.Name == "feishu_skill_get" {
+		if tool.Name == "feishu_skill_list" || tool.Name == "feishu_skill_get" || tool.Name == "feishu_skill_run" {
 			t.Fatalf("%s should be omitted without a configured registry", tool.Name)
 		}
 	}
@@ -471,6 +471,35 @@ func TestSkillGetInvalidNameReturnsStructuredError(t *testing.T) {
 			assertStructuredSkillError(t, err, "invalid_skill_name", "")
 		})
 	}
+}
+
+func TestSkillRunExecutesReadOnlySkillThroughMCPDispatcher(t *testing.T) {
+	tools := FeishuTools{Service: feishu.NewService(config.Config{}), SkillRegistry: testSkillRegistry{manifests: []skills.Manifest{{
+		Name:   "resolver",
+		Inputs: map[string]any{"type": "object", "required": []any{"input"}},
+		Steps:  []skills.Step{{Tool: "feishu_doc_resolve", Args: map[string]any{"input": "${input}"}}},
+	}}}}
+
+	got, err := tools.CallTool(context.Background(), "feishu_skill_run", json.RawMessage([]byte(`{"name":"resolver","inputs":{"input":"https://example.feishu.cn/docx/abc"},"dryRun":true}`)))
+	if err != nil {
+		t.Fatalf("skill run returned error: %v", err)
+	}
+	result, ok := got.(skills.RunResult)
+	if !ok {
+		t.Fatalf("result type = %T, want skills.RunResult", got)
+	}
+	if result.Skill != "resolver" || !result.DryRun || len(result.Steps) != 1 || result.Steps[0].Tool != "feishu_doc_resolve" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestSkillRunUnconfiguredReturnsStructuredError(t *testing.T) {
+	tools := FeishuTools{Service: feishu.NewService(config.Config{})}
+	_, err := tools.CallTool(context.Background(), "feishu_skill_run", json.RawMessage([]byte(`{"name":"resolver"}`)))
+	if err == nil {
+		t.Fatal("expected unconfigured registry error")
+	}
+	assertStructuredSkillError(t, err, "registry_unconfigured", "")
 }
 
 func TestCommentToolsCallHandlers(t *testing.T) {

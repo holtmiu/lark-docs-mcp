@@ -146,6 +146,11 @@ func (t FeishuTools) Tools() []Tool {
 				Description: "Get one configured Feishu/Lark skill manifest summary by name as read-only discovery. Does not execute skills.",
 				InputSchema: objectSchema(map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}}, []string{"name"}),
 			},
+			Tool{
+				Name:        "feishu_skill_run",
+				Description: "Run a configured Feishu/Lark skill in read-only executor mode. Only read-safe skill steps are composed; write-capable skills are rejected.",
+				InputSchema: objectSchema(map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "inputs": map[string]any{"type": "object", "additionalProperties": true}, "dryRun": boolProp}, []string{"name"}),
+			},
 		)
 	}
 	return tools
@@ -373,9 +378,37 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 			return nil, structuredToolError{Code: "skill_not_found", Message: fmt.Sprintf("skill %q was not found", req.Name), Name: req.Name}
 		}
 		return SkillGetResult{Skill: summarizeSkillManifest(manifest)}, nil
+	case "feishu_skill_run":
+		if t.SkillRegistry == nil {
+			return nil, structuredToolError{Code: "registry_unconfigured", Message: "skill registry is not configured"}
+		}
+		var req skills.RunRequest
+		if err := decodeArgs(args, &req); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(req.Skill) == "" {
+			return nil, structuredToolError{Code: "invalid_skill_name", Message: "skill name is required"}
+		}
+		if len(req.Skill) > 128 {
+			return nil, structuredToolError{Code: "invalid_skill_name", Message: "skill name exceeds max length 128"}
+		}
+		executor := skills.NewReadOnlyExecutor(t.SkillRegistry, feishuToolCaller{tools: t})
+		return executor.Run(ctx, req)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
+}
+
+type feishuToolCaller struct {
+	tools FeishuTools
+}
+
+func (c feishuToolCaller) CallTool(ctx context.Context, tool string, args map[string]any) (any, error) {
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return nil, fmt.Errorf("marshal skill step args: %w", err)
+	}
+	return c.tools.CallTool(ctx, tool, raw)
 }
 
 func summarizeSkillList(manifests []skills.Manifest) []SkillSummary {
