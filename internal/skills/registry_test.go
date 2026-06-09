@@ -32,8 +32,10 @@ func TestRegistryLoadsMultipleManifestsFromTempDirectories(t *testing.T) {
 
 func TestRegistryRejectsDuplicateSkillNames(t *testing.T) {
 	root := t.TempDir()
-	writeSkillManifest(t, filepath.Join(root, "one", "skill.yaml"), "duplicate")
-	writeSkillManifest(t, filepath.Join(root, "two", "skill.yaml"), "duplicate")
+	firstPath := filepath.Join(root, "one", "skill.yaml")
+	secondPath := filepath.Join(root, "two", "skill.yaml")
+	writeSkillManifest(t, firstPath, "duplicate")
+	writeSkillManifest(t, secondPath, "duplicate")
 
 	_, err := LoadRegistry([]string{root})
 	if err == nil {
@@ -41,6 +43,36 @@ func TestRegistryRejectsDuplicateSkillNames(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("error = %q, want mention duplicate", err.Error())
+	}
+	if !strings.Contains(err.Error(), firstPath) || !strings.Contains(err.Error(), secondPath) {
+		t.Fatalf("error = %q, want conflicting manifest paths %q and %q", err.Error(), firstPath, secondPath)
+	}
+}
+
+func TestRegistryRejectsWriteSkillByDefaultFailClosed(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, "writer", "skill.yaml")
+	writeWriteSkillManifest(t, manifestPath, "writer")
+
+	_, err := LoadRegistry([]string{root})
+	if err == nil {
+		t.Fatal("LoadRegistry succeeded, want write policy error")
+	}
+	if !strings.Contains(err.Error(), "write") || !strings.Contains(err.Error(), manifestPath) || !strings.Contains(err.Error(), "EnableWrite") {
+		t.Fatalf("error = %q, want actionable write policy error with manifest path and EnableWrite hint", err.Error())
+	}
+}
+
+func TestRegistryAllowsWriteSkillWithExplicitOption(t *testing.T) {
+	root := t.TempDir()
+	writeWriteSkillManifest(t, filepath.Join(root, "writer", "skill.yaml"), "writer")
+
+	registry, err := LoadRegistryWithOptions([]string{root}, RegistryOptions{EnableWrite: true})
+	if err != nil {
+		t.Fatalf("LoadRegistryWithOptions returned error: %v", err)
+	}
+	if manifest, ok := registry.Get("writer"); !ok || !manifest.Write {
+		t.Fatalf("registry.Get(writer) = %#v, %v; want write manifest", manifest, ok)
 	}
 }
 
@@ -74,7 +106,21 @@ func TestRegistryBlocksDotDotPathTraversalInputs(t *testing.T) {
 	}
 }
 
-func TestRegistrySkipsSymlinkEscapes(t *testing.T) {
+func TestRegistryRejectsRemoteURLInputs(t *testing.T) {
+	for _, input := range []string{"https://example.com/skills", "file:///tmp/skills"} {
+		t.Run(input, func(t *testing.T) {
+			_, err := LoadRegistry([]string{input})
+			if err == nil {
+				t.Fatal("LoadRegistry succeeded, want remote URL rejection")
+			}
+			if !strings.Contains(err.Error(), "local path") || !strings.Contains(err.Error(), input) {
+				t.Fatalf("error = %q, want actionable local path rejection for %q", err.Error(), input)
+			}
+		})
+	}
+}
+
+func TestRegistryIntentionallySkipsSymlinkEscapesForSafety(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires privileges on some Windows environments")
 	}
@@ -105,6 +151,15 @@ func manifestNames(manifests []Manifest) []string {
 func writeSkillManifest(t *testing.T, path, name string) {
 	t.Helper()
 	writeFile(t, path, strings.ReplaceAll(validManifest(t), "summarize_doc_for_review", name))
+}
+
+func writeWriteSkillManifest(t *testing.T, path, name string) {
+	t.Helper()
+	manifest := strings.ReplaceAll(validManifest(t), "summarize_doc_for_review", name)
+	manifest = strings.Replace(manifest, "- doc.read", "- doc.comment.create", 1)
+	manifest = strings.Replace(manifest, "write: false", "write: true", 1)
+	manifest = strings.Replace(manifest, "tool: feishu_doc_read", "tool: feishu_doc_create_comment", 1)
+	writeFile(t, path, manifest)
 }
 
 func writeFile(t *testing.T, path, content string) {

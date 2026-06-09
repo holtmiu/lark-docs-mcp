@@ -11,11 +11,23 @@ import (
 // Registry is a read-only collection of validated local skill manifests.
 type Registry struct {
 	manifests map[string]Manifest
+	sources   map[string]string
+}
+
+// RegistryOptions controls which local skill manifests may be exposed.
+type RegistryOptions struct {
+	// EnableWrite must be explicitly true before write-capable skills are loaded.
+	EnableWrite bool
 }
 
 // LoadRegistry loads validated skill manifests from local directories.
 func LoadRegistry(dirs []string) (Registry, error) {
-	registry := Registry{manifests: make(map[string]Manifest)}
+	return LoadRegistryWithOptions(dirs, RegistryOptions{})
+}
+
+// LoadRegistryWithOptions loads validated skill manifests from local directories using an explicit policy.
+func LoadRegistryWithOptions(dirs []string, options RegistryOptions) (Registry, error) {
+	registry := Registry{manifests: make(map[string]Manifest), sources: make(map[string]string)}
 	roots := make([]string, 0, len(dirs))
 	for _, dir := range dirs {
 		root, err := validateRegistryRoot(dir)
@@ -27,7 +39,7 @@ func LoadRegistry(dirs []string) (Registry, error) {
 	sort.Strings(roots)
 
 	for _, root := range roots {
-		if err := loadRegistryRoot(root, registry.manifests); err != nil {
+		if err := loadRegistryRoot(root, registry.manifests, registry.sources, options); err != nil {
 			return Registry{}, err
 		}
 	}
@@ -86,13 +98,14 @@ func validateRegistryRoot(dir string) (string, error) {
 	return filepath.Clean(root), nil
 }
 
-func loadRegistryRoot(root string, manifests map[string]Manifest) error {
+func loadRegistryRoot(root string, manifests map[string]Manifest, sources map[string]string, options RegistryOptions) error {
 	paths := make([]string, 0)
 	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if path != root && entry.IsDir() && entry.Type()&os.ModeSymlink != 0 {
+			// Intentionally skip symlinked directories so a registry cannot walk outside its root.
 			return filepath.SkipDir
 		}
 		if entry.IsDir() || !isManifestFilename(entry.Name()) {
@@ -121,10 +134,14 @@ func loadRegistryRoot(root string, manifests map[string]Manifest) error {
 		if err != nil {
 			return fmt.Errorf("parse skill manifest %q: %w", path, err)
 		}
+		if manifest.Write && !options.EnableWrite {
+			return fmt.Errorf("skill manifest %q declares write: true but registry write policy is disabled; set RegistryOptions.EnableWrite=true only for trusted write-capable skills", path)
+		}
 		if _, exists := manifests[manifest.Name]; exists {
-			return fmt.Errorf("duplicate skill name %q", manifest.Name)
+			return fmt.Errorf("duplicate skill name %q in %q conflicts with %q", manifest.Name, path, sources[manifest.Name])
 		}
 		manifests[manifest.Name] = manifest
+		sources[manifest.Name] = path
 	}
 	return nil
 }
@@ -150,6 +167,7 @@ func safeManifestPath(root, path string) (string, bool, error) {
 		return "", false, err
 	}
 	if !inside {
+		// Intentional safety skip: ignore manifest symlinks that resolve outside the registry root.
 		return "", false, nil
 	}
 	return realPath, true, nil
