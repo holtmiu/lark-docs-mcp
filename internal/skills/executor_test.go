@@ -21,7 +21,7 @@ func TestExecutorRunsReadOnlySkillStepsInOrder(t *testing.T) {
 	caller := &fakeToolCaller{results: []any{map[string]any{"token": "doc-token"}, map[string]any{"markdown": "hello"}}}
 	executor := NewReadOnlyExecutor(fakeExecutorRegistry{manifest: manifest}, caller)
 
-	got, err := executor.Run(context.Background(), RunRequest{Skill: "read-doc", Inputs: map[string]any{"input": "https://example.test/doc"}, DryRun: true})
+	got, err := executor.Run(context.Background(), RunRequest{Skill: "read-doc", Inputs: map[string]any{"input": "https://example.test/doc"}, DryRun: boolPtr(true)})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestExecutorReturnsStructuredStepOutputs(t *testing.T) {
 	caller := &fakeToolCaller{results: []any{map[string]any{"token": "doc-token"}, map[string]any{"canRead": true}}}
 	executor := NewReadOnlyExecutor(fakeExecutorRegistry{manifest: manifest}, caller)
 
-	got, err := executor.Run(context.Background(), RunRequest{Skill: "inspect", Inputs: map[string]any{"unused": "value"}, DryRun: false})
+	got, err := executor.Run(context.Background(), RunRequest{Skill: "inspect", Inputs: map[string]any{"unused": "value"}, DryRun: boolPtr(false)})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -165,6 +165,111 @@ func TestExecutorRejectsTooManySteps(t *testing.T) {
 	assertSkillErrorCode(t, err, "skill_step_limit_exceeded")
 	if len(caller.calls) != 0 {
 		t.Fatalf("calls = %#v, want no calls", caller.calls)
+	}
+}
+
+func TestWriteSkillRejectedWhenWritePolicyDisabled(t *testing.T) {
+	manifest := writeCommentManifest(map[string]any{"input": "doc-token", "content": "hi", "dryRun": false, "operationId": "op-1"})
+	caller := &fakeToolCaller{}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: false})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "comment", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "write_skills_disabled")
+	if len(caller.calls) != 0 {
+		t.Fatalf("calls = %#v, want no unsafe downstream calls", caller.calls)
+	}
+}
+
+func TestWriteStepsDefaultToDryRunTrue(t *testing.T) {
+	manifest := writeCommentManifest(map[string]any{"input": "doc-token", "content": "hi", "operationId": "op-1"})
+	caller := &fakeToolCaller{results: []any{map[string]any{"canWrite": true, "canComment": true}, map[string]any{"dryRun": true}}}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true})
+
+	got, err := executor.Run(context.Background(), RunRequest{Skill: "comment", Inputs: map[string]any{}})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !got.DryRun || len(caller.calls) != 2 {
+		t.Fatalf("result=%+v calls=%#v, want dry-run execution", got, caller.calls)
+	}
+	if caller.calls[1].args["dryRun"] != true {
+		t.Fatalf("write args = %#v, want dryRun true injected by executor", caller.calls[1].args)
+	}
+}
+
+func TestRealWriteRejectedUnlessWritePolicyAllowsRealMutations(t *testing.T) {
+	manifest := writeCommentManifest(map[string]any{"input": "doc-token", "content": "hi", "dryRun": false, "operationId": "op-1"})
+	caller := &fakeToolCaller{}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: false})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "comment", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "real_write_disabled")
+	if len(caller.calls) != 0 {
+		t.Fatalf("calls = %#v, want no unsafe downstream calls", caller.calls)
+	}
+}
+
+func TestRealWriteRequiresOperationIDWhenToolSupportsIt(t *testing.T) {
+	manifest := writeCommentManifest(map[string]any{"input": "doc-token", "content": "hi", "dryRun": false})
+	caller := &fakeToolCaller{}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: true})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "comment", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "operation_id_required")
+	if len(caller.calls) != 0 {
+		t.Fatalf("calls = %#v, want no unsafe downstream calls", caller.calls)
+	}
+}
+
+func TestWriteSkillWithoutWriteCapabilityRejectedBeforeMutation(t *testing.T) {
+	manifest := writeCommentManifest(map[string]any{"input": "doc-token", "content": "hi", "dryRun": false, "operationId": "op-1"})
+	manifest.Capabilities = []string{"doc.read"}
+	caller := &fakeToolCaller{}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: true})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "comment", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "write_capability_required")
+	if len(caller.calls) != 0 {
+		t.Fatalf("calls = %#v, want no unsafe downstream calls", caller.calls)
+	}
+}
+
+func TestWriteSkillWithoutPermissionPreflightRejectedBeforeMutation(t *testing.T) {
+	manifest := Manifest{Name: "comment", Write: true, Inputs: map[string]any{"type": "object"}, Capabilities: []string{"doc.comment.create"}, Steps: []Step{{Tool: "feishu_doc_create_comment", Args: map[string]any{"input": "doc-token", "content": "hi", "dryRun": false, "operationId": "op-1"}}}}
+	caller := &fakeToolCaller{}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: true})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "comment", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "permission_preflight_required")
+	if len(caller.calls) != 0 {
+		t.Fatalf("calls = %#v, want no unsafe downstream calls", caller.calls)
+	}
+}
+
+func TestFailingPermissionPreflightStopsLaterWriteSteps(t *testing.T) {
+	manifest := writeCommentManifest(map[string]any{"input": "doc-token", "content": "hi", "dryRun": false, "operationId": "op-1"})
+	caller := &fakeToolCaller{results: []any{map[string]any{"canWrite": true, "canComment": false}}}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: true})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "comment", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "permission_preflight_denied")
+	if len(caller.calls) != 1 || caller.calls[0].tool != "feishu_doc_check_permission" {
+		t.Fatalf("calls = %#v, want only permission preflight", caller.calls)
+	}
+}
+
+func boolPtr(value bool) *bool { return &value }
+
+func writeCommentManifest(args map[string]any) Manifest {
+	return Manifest{
+		Name:         "comment",
+		Write:        true,
+		Inputs:       map[string]any{"type": "object"},
+		Capabilities: []string{"doc.comment.create"},
+		Steps: []Step{
+			{Tool: "feishu_doc_check_permission", Args: map[string]any{"input": "doc-token"}},
+			{Tool: "feishu_doc_create_comment", Args: args},
+		},
 	}
 }
 

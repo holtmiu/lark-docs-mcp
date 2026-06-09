@@ -16,6 +16,7 @@ func NewFeishuToolsFromConfig(cfg config.Config, allowCredentialSelection bool) 
 	tools := FeishuTools{
 		Service:                  feishu.NewService(cfg),
 		AllowCredentialSelection: allowCredentialSelection,
+		SkillsEnableWrite:        cfg.SkillsEnableWrite,
 	}
 	if len(cfg.SkillDirs) == 0 {
 		return tools, nil

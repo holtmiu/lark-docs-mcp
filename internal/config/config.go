@@ -51,7 +51,8 @@ type Config struct {
 	TokenStorePath                 string
 	TokenEncryptKey                string
 	SkillDirs                      []string
-	SkillsEnableWrite              bool
+	// SkillsEnableWrite is the global safety gate for write-capable skills and real dryRun=false skill mutations.
+	SkillsEnableWrite bool
 }
 
 func Load() Config {

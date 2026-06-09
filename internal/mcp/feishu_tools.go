@@ -18,6 +18,7 @@ type FeishuTools struct {
 	Service                  *feishu.Service
 	AllowCredentialSelection bool
 	SkillRegistry            SkillRegistry
+	SkillsEnableWrite        bool
 }
 
 type SkillRegistry interface {
@@ -157,7 +158,7 @@ func (t FeishuTools) Tools() []Tool {
 			},
 			Tool{
 				Name:        "feishu_skill_run",
-				Description: "Run a configured Feishu/Lark skill in read-only executor mode. Only read-safe skill steps are composed; write-capable skills are rejected.",
+				Description: "Run a configured Feishu/Lark skill. Read-only behavior is the default; write-capable skills require server write enablement, dry-run by default, operationId for real mutations, and permission preflight.",
 				InputSchema: objectSchema(map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "inputs": map[string]any{"type": "object", "additionalProperties": true}, "dryRun": boolProp}, []string{"name"}),
 			},
 		)
@@ -401,7 +402,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		if len(req.Skill) > 128 {
 			return nil, structuredToolError{Code: "invalid_skill_name", Message: "skill name exceeds max length 128"}
 		}
-		executor := skills.NewReadOnlyExecutor(t.SkillRegistry, feishuToolCaller{tools: t})
+		executor := skills.NewExecutorWithOptions(t.SkillRegistry, feishuToolCaller{tools: t}, skills.ExecutorOptions{EnableWrite: t.SkillsEnableWrite, EnableRealWrites: t.SkillsEnableWrite})
 		result, err := executor.Run(ctx, req)
 		if err != nil {
 			return nil, structuredSkillRunError(err)

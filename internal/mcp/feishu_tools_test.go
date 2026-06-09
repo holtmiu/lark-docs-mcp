@@ -532,10 +532,10 @@ func TestSkillRunExecutorErrorsReturnStructuredMCPJSON(t *testing.T) {
 			wantCode: "unsupported_interpolation",
 		},
 		{
-			name:     "read only violation",
+			name:     "write disabled",
 			manifest: skills.Manifest{Name: "writer", Write: true, Inputs: map[string]any{"type": "object"}, Steps: []skills.Step{{Tool: "feishu_doc_create_comment", Args: map[string]any{"input": "doc", "content": "hi"}}}},
 			args:     `{"name":"writer"}`,
-			wantCode: "read_only_violation",
+			wantCode: "write_skills_disabled",
 		},
 		{
 			name:     "step failed",
