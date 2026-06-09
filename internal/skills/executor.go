@@ -264,12 +264,17 @@ func permissionTargetsWrite(preflightArgs, writeArgs map[string]any, tool string
 	if !ok || preflightInput != writeTarget {
 		return false
 	}
-	writeCredential, hasWriteCredential := stringArg(writeArgs, "credentialId")
-	if !hasWriteCredential || writeCredential == "" {
+	_, preflightCredentialSpecified := preflightArgs["credentialId"]
+	_, writeCredentialSpecified := writeArgs["credentialId"]
+	if preflightCredentialSpecified != writeCredentialSpecified {
+		return false
+	}
+	if !preflightCredentialSpecified {
 		return true
 	}
 	preflightCredential, hasPreflightCredential := stringArg(preflightArgs, "credentialId")
-	return hasPreflightCredential && preflightCredential == writeCredential
+	writeCredential, hasWriteCredential := stringArg(writeArgs, "credentialId")
+	return hasPreflightCredential && hasWriteCredential && preflightCredential != "" && preflightCredential == writeCredential
 }
 
 func writePermissionTarget(tool string, args map[string]any) (string, bool) {

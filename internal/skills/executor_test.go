@@ -275,6 +275,27 @@ func TestRealWriteRequiresPermissionPreflightCredentialMatch(t *testing.T) {
 	}
 }
 
+func TestRealWriteRequiresPermissionPreflightCredentialSymmetry(t *testing.T) {
+	manifest := Manifest{
+		Name:         "comment",
+		Write:        true,
+		Inputs:       map[string]any{"type": "object"},
+		Capabilities: []string{"doc.comment.create"},
+		Steps: []Step{
+			{Tool: "feishu_doc_check_permission", Args: map[string]any{"input": "doc-token", "credentialId": "cred-1"}},
+			{Tool: "feishu_doc_create_comment", Args: map[string]any{"input": "doc-token", "content": "hi", "dryRun": false, "operationId": "op-1"}},
+		},
+	}
+	caller := &fakeToolCaller{results: []any{map[string]any{"canWrite": true, "canComment": true}}}
+	executor := NewExecutorWithOptions(fakeExecutorRegistry{manifest: manifest}, caller, ExecutorOptions{EnableWrite: true, EnableRealWrites: true})
+
+	_, err := executor.Run(context.Background(), RunRequest{Skill: "comment", Inputs: map[string]any{}, DryRun: boolPtr(false)})
+	assertSkillErrorCode(t, err, "permission_preflight_target_mismatch")
+	if len(caller.calls) != 1 || caller.calls[0].tool != "feishu_doc_check_permission" {
+		t.Fatalf("calls = %#v, want only credential-bound permission preflight", caller.calls)
+	}
+}
+
 func TestRealCreateRequiresBoundPreflightForFolderTarget(t *testing.T) {
 	manifest := Manifest{
 		Name:         "create-doc",
