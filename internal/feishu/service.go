@@ -78,6 +78,10 @@ func (s *Service) GetMetadataByIdentity(ctx context.Context, identity DocumentId
 }
 
 func (s *Service) GetMetadataByIdentityWithActor(ctx context.Context, identity DocumentIdentity, actor ActorContext) (DocumentMetadata, error) {
+	identity, err := s.CanonicalizeIdentity(ctx, identity, actor)
+	if err != nil {
+		return DocumentMetadata{}, err
+	}
 	if identity.ResourceType != ResourceDocx && identity.ResourceType != ResourceUnknown {
 		return DocumentMetadata{}, newError(ErrUnsupportedDocumentType, fmt.Sprintf("metadata for resource type %s is not implemented yet", identity.ResourceType), nil)
 	}
@@ -103,6 +107,10 @@ func (s *Service) ReadDocument(ctx context.Context, input string, options ReadOp
 
 func (s *Service) ReadDocumentWithActor(ctx context.Context, input string, options ReadOptions, actor ActorContext) (DocumentReadResult, error) {
 	identity, err := s.Resolve(input)
+	if err != nil {
+		return DocumentReadResult{}, err
+	}
+	identity, err = s.CanonicalizeIdentity(ctx, identity, actor)
 	if err != nil {
 		return DocumentReadResult{}, err
 	}
@@ -153,7 +161,7 @@ func (s *Service) CreateDocumentWithActor(ctx context.Context, req CreateDocumen
 		return result, nil
 	}
 	if strings.TrimSpace(req.FolderToken) != "" {
-		folderPermission, err := s.CheckPermissionByIdentityWithActor(ctx, DocumentIdentity{Provider: Provider(s.cfg.Provider), ResourceType: ResourceDriveFile, Token: req.FolderToken}, actor)
+		folderPermission, err := s.checkPermissionByIdentityWithActor(ctx, DocumentIdentity{Provider: Provider(s.cfg.Provider), ResourceType: ResourceDriveFile, Token: req.FolderToken}, actor, false)
 		if err != nil {
 			return DocumentWriteResult{}, err
 		}
@@ -188,6 +196,10 @@ func (s *Service) AppendDocument(ctx context.Context, input string, req AppendRe
 
 func (s *Service) AppendDocumentWithActor(ctx context.Context, input string, req AppendRequest, actor ActorContext) (DocumentWriteResult, error) {
 	identity, err := s.Resolve(input)
+	if err != nil {
+		return DocumentWriteResult{}, err
+	}
+	identity, err = s.CanonicalizeIdentity(ctx, identity, actor)
 	if err != nil {
 		return DocumentWriteResult{}, err
 	}

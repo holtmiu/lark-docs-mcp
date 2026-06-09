@@ -34,6 +34,10 @@ func (s *Service) ListComments(ctx context.Context, input string, req ListCommen
 	if err != nil {
 		return CommentListResult{}, err
 	}
+	identity, err = s.CanonicalizeIdentity(ctx, identity, actor)
+	if err != nil {
+		return CommentListResult{}, err
+	}
 	pathTemplate := strings.TrimSpace(s.cfg.DocxCommentsPathTemplate)
 	if pathTemplate == "" {
 		pathTemplate = "/open-apis/drive/v1/files/%s/comments"
@@ -59,6 +63,10 @@ func (s *Service) CreateComment(ctx context.Context, input string, req CreateCom
 	if err != nil {
 		return CommentWriteResult{}, err
 	}
+	identity, err = s.CanonicalizeIdentity(ctx, identity, actor)
+	if err != nil {
+		return CommentWriteResult{}, err
+	}
 	if err := req.Validate(); err != nil {
 		return CommentWriteResult{}, err
 	}
@@ -81,6 +89,10 @@ func (s *Service) CreateComment(ctx context.Context, input string, req CreateCom
 
 func (s *Service) ReplyComment(ctx context.Context, input string, commentID string, req ReplyCommentRequest, actor ActorContext) (CommentWriteResult, error) {
 	identity, err := s.Resolve(input)
+	if err != nil {
+		return CommentWriteResult{}, err
+	}
+	identity, err = s.CanonicalizeIdentity(ctx, identity, actor)
 	if err != nil {
 		return CommentWriteResult{}, err
 	}
@@ -110,6 +122,10 @@ func (s *Service) ReplyComment(ctx context.Context, input string, commentID stri
 
 func (s *Service) ResolveComment(ctx context.Context, input string, commentID string, req ResolveCommentRequest, actor ActorContext) (CommentWriteResult, error) {
 	identity, err := s.Resolve(input)
+	if err != nil {
+		return CommentWriteResult{}, err
+	}
+	identity, err = s.CanonicalizeIdentity(ctx, identity, actor)
 	if err != nil {
 		return CommentWriteResult{}, err
 	}

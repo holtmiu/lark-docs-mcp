@@ -28,9 +28,12 @@ type Config struct {
 	DocxChildrenPathTemplate       string
 	DocxAppendChildrenPathTemplate string
 	DocxPermissionPathTemplate     string
+	FolderPermissionPathTemplate   string
 	DocxCommentsPathTemplate       string
 	DocxCommentRepliesPathTemplate string
 	DocxCommentResolvePathTemplate string
+	WikiNodePathTemplate           string
+	DriveFileMetadataPathTemplate  string
 	DocxCreatePath                 string
 	MCPHTTPAddr                    string
 	MCPServerAPIKey                string
@@ -66,9 +69,12 @@ func Load() Config {
 		DocxChildrenPathTemplate:       getenv("FEISHU_DOCX_CHILDREN_PATH_TEMPLATE", "/open-apis/docx/v1/documents/%s/blocks/%s/children"),
 		DocxAppendChildrenPathTemplate: getenv("FEISHU_DOCX_APPEND_CHILDREN_PATH_TEMPLATE", "/open-apis/docx/v1/documents/%s/blocks/%s/children"),
 		DocxPermissionPathTemplate:     getenv("FEISHU_DOCX_PERMISSION_PATH_TEMPLATE", "/open-apis/drive/v1/permissions/%s/public?type=docx"),
+		FolderPermissionPathTemplate:   getenv("FEISHU_FOLDER_PERMISSION_PATH_TEMPLATE", "/open-apis/drive/v1/permissions/%s/public?type=folder"),
 		DocxCommentsPathTemplate:       getenv("FEISHU_DOCX_COMMENTS_PATH_TEMPLATE", "/open-apis/drive/v1/files/%s/comments"),
 		DocxCommentRepliesPathTemplate: getenv("FEISHU_DOCX_COMMENT_REPLIES_PATH_TEMPLATE", "/open-apis/drive/v1/files/%s/comments/%s/replies"),
 		DocxCommentResolvePathTemplate: getenv("FEISHU_DOCX_COMMENT_RESOLVE_PATH_TEMPLATE", "/open-apis/drive/v1/files/%s/comments/%s"),
+		WikiNodePathTemplate:           getenv("FEISHU_WIKI_NODE_PATH_TEMPLATE", "/open-apis/wiki/v2/spaces/get_node?token=%s"),
+		DriveFileMetadataPathTemplate:  getenv("FEISHU_DRIVE_FILE_METADATA_PATH_TEMPLATE", "/open-apis/drive/v1/files/%s"),
 		DocxCreatePath:                 getenv("FEISHU_DOCX_CREATE_PATH", "/open-apis/docx/v1/documents"),
 		MCPHTTPAddr:                    getenv("MCP_HTTP_ADDR", ":8080"),
 		MCPServerAPIKey:                os.Getenv("MCP_SERVER_API_KEY"),

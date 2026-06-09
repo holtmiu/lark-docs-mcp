@@ -20,12 +20,29 @@ func (s *Service) CheckPermissionWithActor(ctx context.Context, input string, ac
 }
 
 func (s *Service) CheckPermissionByIdentityWithActor(ctx context.Context, identity DocumentIdentity, actor ActorContext) (PermissionSnapshot, error) {
+	return s.checkPermissionByIdentityWithActor(ctx, identity, actor, true)
+}
+
+func (s *Service) checkPermissionByIdentityWithActor(ctx context.Context, identity DocumentIdentity, actor ActorContext, canonicalize bool) (PermissionSnapshot, error) {
+	if canonicalize {
+		var err error
+		identity, err = s.CanonicalizeIdentity(ctx, identity, actor)
+		if err != nil {
+			return PermissionSnapshot{}, err
+		}
+	}
 	if strings.TrimSpace(identity.Token) == "" {
 		return PermissionSnapshot{}, newError(ErrInvalidInput, "document token is required for permission check", nil)
 	}
 	pathTemplate := strings.TrimSpace(s.cfg.DocxPermissionPathTemplate)
+	if !canonicalize && identity.ResourceType == ResourceDriveFile {
+		pathTemplate = strings.TrimSpace(s.cfg.FolderPermissionPathTemplate)
+	}
 	if pathTemplate == "" {
 		pathTemplate = "/open-apis/drive/v1/permissions/%s/public?type=docx"
+		if !canonicalize && identity.ResourceType == ResourceDriveFile {
+			pathTemplate = "/open-apis/drive/v1/permissions/%s/public?type=folder"
+		}
 	}
 	path := fmt.Sprintf(pathTemplate, url.PathEscape(identity.Token))
 	var raw map[string]any
