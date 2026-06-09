@@ -8,7 +8,6 @@ import (
 	"syscall"
 
 	"github.com/holtmiu/lark-docs-mcp/internal/config"
-	"github.com/holtmiu/lark-docs-mcp/internal/feishu"
 	"github.com/holtmiu/lark-docs-mcp/internal/mcp"
 )
 
@@ -19,8 +18,12 @@ func main() {
 	defer stop()
 
 	cfg := config.Load()
-	service := feishu.NewService(cfg)
-	server := mcp.NewServer("feishu-doc-mcp-server", version, mcp.FeishuTools{Service: service, AllowCredentialSelection: true})
+	tools, err := mcp.NewFeishuToolsFromConfig(cfg, true)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skill registry configuration error: %v\n", err)
+		os.Exit(1)
+	}
+	server := mcp.NewServer("feishu-doc-mcp-server", version, tools)
 	if err := server.Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)

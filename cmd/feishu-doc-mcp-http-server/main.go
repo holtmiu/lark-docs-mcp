@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/holtmiu/lark-docs-mcp/internal/config"
-	"github.com/holtmiu/lark-docs-mcp/internal/feishu"
 	"github.com/holtmiu/lark-docs-mcp/internal/mcp"
 )
 
@@ -25,8 +24,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "security configuration error: %v\n", err)
 		os.Exit(1)
 	}
-	service := feishu.NewService(cfg)
-	h := mcp.NewHTTPServerWithOptions("feishu-doc-mcp-http-server", version, mcp.FeishuTools{Service: service}, mcp.HTTPServerOptions{
+	tools, err := mcp.NewFeishuToolsFromConfig(cfg, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skill registry configuration error: %v\n", err)
+		os.Exit(1)
+	}
+	h := mcp.NewHTTPServerWithOptions("feishu-doc-mcp-http-server", version, tools, mcp.HTTPServerOptions{
 		APIKey:               cfg.MCPServerAPIKey,
 		AllowUnauthenticated: cfg.MCPAllowUnauthenticated,
 		AllowedOrigins:       cfg.MCPAllowedOrigins,

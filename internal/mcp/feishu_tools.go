@@ -346,7 +346,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		return t.Service.ResolveComment(ctx, req.Input, req.CommentID, feishu.ResolveCommentRequest{Resolved: *req.Resolved, DryRun: req.DryRun, OperationID: req.OperationID}, feishu.ActorContext{CredentialID: req.CredentialID})
 	case "feishu_skill_list":
 		if t.SkillRegistry == nil {
-			return nil, fmt.Errorf("skill registry is not configured")
+			return nil, structuredToolError{Code: "registry_unconfigured", Message: "skill registry is not configured"}
 		}
 		if err := decodeArgs(args, &struct{}{}); err != nil {
 			return nil, err
@@ -354,7 +354,7 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 		return SkillListResult{Skills: summarizeSkillList(t.SkillRegistry.List())}, nil
 	case "feishu_skill_get":
 		if t.SkillRegistry == nil {
-			return nil, fmt.Errorf("skill registry is not configured")
+			return nil, structuredToolError{Code: "registry_unconfigured", Message: "skill registry is not configured"}
 		}
 		var req struct {
 			Name string `json:"name"`
@@ -363,10 +363,10 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 			return nil, err
 		}
 		if strings.TrimSpace(req.Name) == "" {
-			return nil, fmt.Errorf("name is required")
+			return nil, structuredToolError{Code: "invalid_skill_name", Message: "skill name is required"}
 		}
 		if len(req.Name) > 128 {
-			return nil, fmt.Errorf("name exceeds max length 128")
+			return nil, structuredToolError{Code: "invalid_skill_name", Message: "skill name exceeds max length 128"}
 		}
 		manifest, ok := t.SkillRegistry.Get(req.Name)
 		if !ok {

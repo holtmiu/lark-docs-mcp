@@ -432,16 +432,44 @@ func TestSkillGetUnknownSkillReturnsStructuredMCPError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected unknown skill error")
 	}
-	var structured struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-		Name    string `json:"name"`
+	assertStructuredSkillError(t, err, "skill_not_found", "missing")
+}
+
+func TestSkillDiscoveryUnconfiguredReturnsStructuredErrors(t *testing.T) {
+	tools := FeishuTools{Service: feishu.NewService(config.Config{})}
+	for _, tc := range []struct {
+		tool string
+		args json.RawMessage
+	}{
+		{tool: "feishu_skill_list", args: json.RawMessage([]byte(`{}`))},
+		{tool: "feishu_skill_get", args: json.RawMessage([]byte(`{"name":"known"}`))},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			_, err := tools.CallTool(context.Background(), tc.tool, tc.args)
+			if err == nil {
+				t.Fatal("expected unconfigured registry error")
+			}
+			assertStructuredSkillError(t, err, "registry_unconfigured", "")
+		})
 	}
-	if decodeErr := json.Unmarshal([]byte(err.Error()), &structured); decodeErr != nil {
-		t.Fatalf("error %q was not structured JSON: %v", err.Error(), decodeErr)
-	}
-	if structured.Code != "skill_not_found" || structured.Name != "missing" || !strings.Contains(structured.Message, "missing") {
-		t.Fatalf("structured error = %+v", structured)
+}
+
+func TestSkillGetInvalidNameReturnsStructuredError(t *testing.T) {
+	tools := FeishuTools{Service: feishu.NewService(config.Config{}), SkillRegistry: testSkillRegistry{}}
+	for _, tc := range []struct {
+		name string
+		args json.RawMessage
+	}{
+		{name: "blank", args: json.RawMessage([]byte(`{"name":"   "}`))},
+		{name: "too_long", args: json.RawMessage([]byte(`{"name":"` + strings.Repeat("a", 129) + `"}`))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tools.CallTool(context.Background(), "feishu_skill_get", tc.args)
+			if err == nil {
+				t.Fatal("expected invalid name error")
+			}
+			assertStructuredSkillError(t, err, "invalid_skill_name", "")
+		})
 	}
 }
 
@@ -544,6 +572,24 @@ func toolByName(t *testing.T, name string) *Tool {
 	}
 	t.Fatalf("%s not found", name)
 	return nil
+}
+
+func assertStructuredSkillError(t *testing.T, err error, wantCode, wantName string) {
+	t.Helper()
+	var structured struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Name    string `json:"name"`
+	}
+	if decodeErr := json.Unmarshal([]byte(err.Error()), &structured); decodeErr != nil {
+		t.Fatalf("error %q was not structured JSON: %v", err.Error(), decodeErr)
+	}
+	if structured.Code != wantCode || structured.Message == "" {
+		t.Fatalf("structured error = %+v, want code %q with message", structured, wantCode)
+	}
+	if wantName != "" && structured.Name != wantName {
+		t.Fatalf("structured error name = %q, want %q", structured.Name, wantName)
+	}
 }
 
 type testSkillRegistry struct {
