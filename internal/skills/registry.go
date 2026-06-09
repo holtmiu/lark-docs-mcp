@@ -147,7 +147,7 @@ func loadRegistryRoot(root string, manifests map[string]Manifest, sources map[st
 }
 
 func isManifestFilename(name string) bool {
-	return name == "skill.yaml" || name == "skill.yml"
+	return name == "skill.yaml" || name == "skill.yml" || strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml")
 }
 
 func safeManifestPath(root, path string) (string, bool, error) {

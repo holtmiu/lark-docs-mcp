@@ -38,6 +38,59 @@ The server currently exposes these MCP tools:
 | `feishu_doc_reply_comment` | Replies to a comment when the target comment thread allows replies. |
 | `feishu_doc_resolve_comment` | Resolves or reopens a comment. |
 
+### Built-in skills
+
+The repository includes built-in skills in `./skills` so MCP clients can discover and run reusable document workflows without inventing the manifest structure.
+
+Enable skill discovery by pointing the server at a skill directory. Files named `skill.yaml`, `skill.yml`, `*.yaml`, or `*.yml` inside configured skill directories are treated as skill manifests; keep unrelated YAML files outside those directories. The write-skill load gate defaults to `FEISHU_SKILLS_ENABLE_WRITE=false`; because `./skills` includes write-capable built-in skills, load the full built-in set only in a trusted deployment:
+
+```bash
+export FEISHU_SKILLS_DIRS=./skills
+export FEISHU_SKILLS_ENABLE_WRITE=true
+```
+
+When a skill registry is configured, the MCP server exposes:
+
+| Tool | What it does |
+| --- | --- |
+| `feishu_skill_list` | Lists configured skill manifests. |
+| `feishu_skill_get` | Returns one skill manifest by name. |
+| `feishu_skill_run` | Runs a configured skill through the existing Feishu/Lark tool layer. |
+
+Write-capable skills stay disabled unless `FEISHU_SKILLS_ENABLE_WRITE=true` is set for a trusted deployment. Write skill execution remains dry-run by default; real mutations require `dryRun:false`, an `operationId`, write enablement in server configuration, and a permission preflight before the mutation step.
+
+Built-in skills:
+
+| Skill | Mode | Intent |
+| --- | --- | --- |
+| `export-doc-markdown` | Read-only | Reads document metadata and exports the document as Markdown. |
+| `create-draft-doc` | Write, dry-run by default | Creates a draft docx document from Markdown in a target folder. |
+| `add-review-comment` | Write, dry-run by default | Adds a review comment to a document after permission preflight. |
+
+Discovery and run request shapes:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"feishu_skill_list","arguments":{}}}
+```
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"feishu_skill_get","arguments":{"name":"export-doc-markdown"}}}
+```
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"feishu_skill_run","arguments":{"name":"export-doc-markdown","inputs":{"input":"${FEISHU_DOC_INPUT}"}}}}
+```
+
+Write-capable skill dry-run request shape:
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"feishu_skill_run","arguments":{"name":"add-review-comment","inputs":{"input":"${FEISHU_DOC_INPUT}","content":"Review note from MCP skill"}}}}
+```
+
+Real write requests set top-level `dryRun:false` and include a unique `operationId` inside `inputs`; use only after confirming the target document or folder and server write policy.
+
+This phase validates manifest loading and unit-level behavior only; real Feishu/Lark skill E2E validation is tracked separately.
+
 ### Identity and document coverage
 
 - Accepts docx URLs and raw docx tokens.
@@ -93,7 +146,6 @@ Known observed limitation: the separate add-reply endpoint may return Feishu cod
 
 - It is not a hosted SaaS; you deploy and operate it yourself.
 - It does not yet provide a full multi-tenant user admin console.
-- It does not yet implement a complete skill-pack runtime for reusable workflows. A plan for skill support is in `docs/plans/2026-06-09-skills-support-plan.md`.
 - It does not bypass Feishu/Lark app scopes or document sharing rules. The app or user token must have access.
 
 ## Build and test

@@ -79,7 +79,7 @@ func TestRegistryAllowsWriteSkillWithExplicitOption(t *testing.T) {
 func TestRegistryIgnoresNonManifestFiles(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "README.md"), "# not a skill\n")
-	writeFile(t, filepath.Join(root, "not-skill.yaml"), "name: invalid\n")
+	writeFile(t, filepath.Join(root, "notes.txt"), "name: invalid\n")
 	writeSkillManifest(t, filepath.Join(root, "valid", "skill.yaml"), "valid")
 
 	registry, err := LoadRegistry([]string{root})
@@ -90,6 +90,36 @@ func TestRegistryIgnoresNonManifestFiles(t *testing.T) {
 	want := []string{"valid"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("registry.List names = %#v, want %#v", got, want)
+	}
+}
+
+func TestRegistryLoadsNamedYAMLManifestFiles(t *testing.T) {
+	root := t.TempDir()
+	writeSkillManifest(t, filepath.Join(root, "export-doc-markdown.yaml"), "export-doc-markdown")
+	writeSkillManifest(t, filepath.Join(root, "nested", "create-draft-doc.yml"), "create-draft-doc")
+
+	registry, err := LoadRegistry([]string{root})
+	if err != nil {
+		t.Fatalf("LoadRegistry returned error: %v", err)
+	}
+	got := manifestNames(registry.List())
+	want := []string{"create-draft-doc", "export-doc-markdown"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("registry.List names = %#v, want %#v", got, want)
+	}
+}
+
+func TestRegistryRejectsInvalidYAMLManifestFiles(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, "not-a-skill.yaml")
+	writeFile(t, manifestPath, "name: invalid\n")
+
+	_, err := LoadRegistry([]string{root})
+	if err == nil {
+		t.Fatal("LoadRegistry succeeded, want invalid manifest error for YAML manifest file")
+	}
+	if !strings.Contains(err.Error(), manifestPath) || !strings.Contains(err.Error(), "inputs schema") {
+		t.Fatalf("error = %q, want actionable invalid manifest error mentioning %q", err.Error(), manifestPath)
 	}
 }
 

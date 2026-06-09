@@ -1,0 +1,27 @@
+name: export-doc-markdown
+version: 0.1.0
+title: Export Document Markdown
+description: Read a Feishu/Lark document and return metadata plus Markdown content.
+capabilities:
+  - doc.metadata
+  - doc.read
+write: false
+inputs:
+  type: object
+  required: [input]
+  properties:
+    input:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      description: Feishu/Lark document URL or token.
+steps:
+  - tool: feishu_doc_get_metadata
+    args:
+      input: "${input}"
+  - tool: feishu_doc_read
+    args:
+      input: "${input}"
+      format: markdown
+outputs:
+  type: object

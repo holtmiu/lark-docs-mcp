@@ -108,12 +108,16 @@ func (e ReadOnlyExecutor) Run(ctx context.Context, req RunRequest) (RunResult, e
 	if err := validateRequiredInputs(manifest, inputs); err != nil {
 		return RunResult{}, err
 	}
+	interpolationInputs := cloneMap(inputs)
+	if _, ok := interpolationInputs["operationId"]; !ok {
+		interpolationInputs["operationId"] = ""
+	}
 	if len(manifest.Steps) > MaxReadOnlySkillSteps {
 		return RunResult{}, SkillError{Code: "skill_step_limit_exceeded", Message: fmt.Sprintf("skill %q has %d steps, exceeding max %d", manifest.Name, len(manifest.Steps), MaxReadOnlySkillSteps), Name: manifest.Name}
 	}
 	resolvedSteps := make([]StepResult, len(manifest.Steps))
 	for i, step := range manifest.Steps {
-		args, err := interpolateArgs(step.Args, inputs)
+		args, err := interpolateArgs(step.Args, interpolationInputs)
 		if err != nil {
 			return RunResult{}, SkillError{Code: "unsupported_interpolation", Message: fmt.Sprintf("step %d %s: %v", i, step.Tool, err), Name: manifest.Name, Err: err}
 		}

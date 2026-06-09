@@ -1,0 +1,41 @@
+name: create-draft-doc
+version: 0.1.0
+title: Create Draft Document
+description: Create a draft Feishu/Lark document from Markdown in a target folder, using dry-run by default.
+capabilities:
+  - doc.create
+  - doc.permission.check
+write: true
+inputs:
+  type: object
+  required: [folderToken, title, markdown]
+  properties:
+    folderToken:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      description: Target folder token used for permission preflight and document creation.
+    title:
+      type: string
+      minLength: 1
+      maxLength: 512
+    markdown:
+      type: string
+      minLength: 1
+      maxLength: 200000
+    operationId:
+      type: string
+      maxLength: 128
+      description: Required by the executor when dryRun is false.
+steps:
+  - tool: feishu_doc_check_permission
+    args:
+      input: "${folderToken}"
+  - tool: feishu_doc_create
+    args:
+      folderToken: "${folderToken}"
+      title: "${title}"
+      markdown: "${markdown}"
+      operationId: "${operationId}"
+outputs:
+  type: object
