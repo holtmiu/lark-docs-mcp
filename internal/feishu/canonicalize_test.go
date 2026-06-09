@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/holtmiu/ChatGPT_MCP_Connectors/internal/config"
+	"github.com/holtmiu/lark-docs-mcp/internal/config"
 )
 
 func TestCanonicalizeIdentityWikiURLToDocxToken(t *testing.T) {

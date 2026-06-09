@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/holtmiu/ChatGPT_MCP_Connectors/internal/config"
-	"github.com/holtmiu/ChatGPT_MCP_Connectors/internal/feishu"
+	"github.com/holtmiu/lark-docs-mcp/internal/config"
+	"github.com/holtmiu/lark-docs-mcp/internal/feishu"
 )
 
 func TestToolsIncludesOAuthAuthURL(t *testing.T) {

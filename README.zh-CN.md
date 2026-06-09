@@ -1,64 +1,114 @@
-# ChatGPT MCP Connectors
+# Lark Docs MCP
 
-面向 ChatGPT / MCP 工具调用场景的 Go 语言连接器实现。
+用于通过 MCP 客户端操作飞书 / Lark Docs 的 Remote MCP Server、stdio MCP Server 和本地 CLI。
 
-当前仓库主要实现了一个 **飞书 / Lark 文档 MCP Connector**，用于让支持 Remote MCP 的客户端通过工具调用读取、创建和追加飞书文档内容。
+这个项目可以把 ChatGPT、Claude Desktop、Cursor、Hermes 以及其他 MCP Host 接到飞书 / Lark 文档上，重点能力是文档身份解析、安全读取、受控写入、评论操作，以及以 HTTPS Remote MCP 服务形式部署。
 
-## 项目状态
+## 当前产品能力
 
-当前版本定位为：
-
-- 可本地开发和调试的 MCP stdio server。
-- 可部署到服务器并通过 HTTPS 暴露的 Remote MCP HTTP server。
-- 面向飞书 / Lark 文档的只读和写入主链路 MVP。
-
-需要注意：当前实现使用 **飞书应用 / tenant credential** 模式，适合自用、内部应用或单租户测试。多用户生产环境建议后续补充飞书用户 OAuth、加密 token 存储、用户级权限校验和写操作二次确认。
-
-## 功能概览
+### MCP 连接方式
 
 仓库包含：
 
-- 本地 MCP stdio 服务端：`cmd/feishu-doc-mcp-server`
 - 远程 HTTP MCP 服务端：`cmd/feishu-doc-mcp-http-server`
+- 本地 stdio MCP 服务端：`cmd/feishu-doc-mcp-server`
 - 本地调试 CLI：`cmd/feishu-doc-cli`
 - 飞书 / Lark API 适配层：`internal/feishu`
 - MCP JSON-RPC transport：`internal/mcp`
-- Markdown 导入 / 导出工具：`internal/feishu`
 
-远程 HTTP MCP server 是给 ChatGPT 网页端或其他 Web MCP 客户端连接的主路径；stdio server 主要用于本地 MCP 客户端和开发调试。
+HTTP 端点：
 
-## 支持的 MCP 工具
+| 端点 | 方法 | 说明 |
+| --- | --- | --- |
+| `/healthz` | `GET` | 健康检查。 |
+| `/mcp` | `POST` | JSON-RPC MCP 调用入口。 |
+| `/mcp` | `OPTIONS` | CORS 预检。 |
 
-| 工具名 | 说明 |
+HTTP 服务支持 Bearer token 保护、CORS allowlist、请求体大小限制、JSON-RPC batch 限制，并且远程未授权调用默认 fail-closed。
+
+### 已支持的 MCP 工具
+
+| 工具名 | 能力 |
 | --- | --- |
-| `feishu_doc_resolve` | 解析飞书 / Lark 文档 URL 或 token，返回标准化文档身份。 |
-| `feishu_doc_get_metadata` | 获取飞书 / Lark Docx 文档元信息。 |
-| `feishu_doc_read` | 读取文档块结构，并导出 Markdown。 |
-| `feishu_doc_create` | 创建飞书 / Lark Docx 文档，可选写入初始 Markdown 内容。 |
-| `feishu_doc_append` | 向已有飞书 / Lark Docx 文档追加 Markdown 内容。 |
+| `feishu_oauth_auth_url` | 生成飞书 / Lark 用户 OAuth 授权 URL，不暴露 app secret 或 token。 |
+| `feishu_doc_resolve` | 将飞书 / Lark URL 或 token 解析为标准化文档身份；不调用飞书 API。 |
+| `feishu_doc_get_metadata` | 获取 docx 文档元信息。 |
+| `feishu_doc_check_permission` | 在读、写、评论前预检文档能力。 |
+| `feishu_doc_read` | 读取 docx blocks，并导出标准化 JSON / Markdown。 |
+| `feishu_doc_create` | 创建 docx 文档，可选写入初始 Markdown 内容。 |
+| `feishu_doc_append` | 向已有 docx 文档追加 Markdown 内容。 |
+| `feishu_doc_list_comments` | 分页列出文档评论。 |
+| `feishu_doc_create_comment` | 创建全文评论或支持的局部评论。 |
+| `feishu_doc_reply_comment` | 在目标评论线程允许回复时追加回复。 |
+| `feishu_doc_resolve_comment` | 解决或重新打开评论。 |
 
-## 重要概念：不是把 GitHub 仓库地址填到 GPT 里
+### 文档类型与身份解析
 
-GPT 端不能直接使用：
+当前已经支持：
 
-```text
-git@github.com:holtmiu/ChatGPT_MCP_Connectors.git
-```
+- 接收 docx URL 和原始 docx token。
+- 在飞书 / Lark API 暴露映射关系时，将 wiki / drive 风格输入 canonicalize 成真实 docx identity。
+- 读取和写入飞书 / Lark 新版文档 docx。
+- create / append 流程中的常见 Markdown block 转换。
+- 可选返回 unsupported raw block，方便跟踪飞书 API 演进，同时不影响普通响应。
 
-这个地址只是源码仓库地址。
+### 授权与安全模型
 
-你需要先把本仓库代码部署成一个可访问的 HTTP 服务，然后在 GPT / Web MCP 客户端里填写部署后的 MCP 地址，例如：
+支持的凭证路径：
 
-```text
-https://your-domain.example/mcp
-```
+- App / tenant credential：通过 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 获取应用身份 token。
+- 可选预置 `FEISHU_TENANT_ACCESS_TOKEN`：用于本地测试。
+- 用户 OAuth 授权 URL 生成，以及加密 token store 的基础能力。
+
+安全行为：
+
+- 写入和评论类工具默认 dry-run。
+- 真实写入需要显式传 `dryRun:false`，或设置 `FEISHU_DOC_WRITE_DRY_RUN_DEFAULT=false`。
+- 远程部署可以禁用调用方传入的 `credentialId`，避免外部调用者任意选择存储凭证。
+- MCP 工具不会返回 secret 或 token 值。
+- 生产环境建议必须通过 HTTPS 暴露，并设置 `MCP_SERVER_API_KEY`。
+
+### 已验证的真实端到端能力
+
+已经完成真实 Feishu/Lark E2E 验证：
+
+- Remote MCP health check 和 authenticated ping。
+- 未授权 `/mcp` 请求返回 HTTP 401，默认关闭裸露访问。
+- MCP `tools/list` 正常返回工具列表。
+- 远程模式下拒绝 caller-supplied credential selection。
+- 创建真实 docx 文档。
+- 读取真实 docx 原始内容。
+- 创建真实全文评论。
+- 列出评论并验证目标评论存在。
+- 解决评论并验证 `is_solved=true`。
+
+脱敏验证日志见：`docs/phase8-e2e-validation-log.md`。
+
+已观察到的限制：对某些全文评论，单独“追加回复”接口可能返回飞书 `1069302`，提示评论区不允许后续回复；但创建全文评论时附带初始 `reply_list` 已验证可成功写入和持久化。
+
+## 适合做什么
+
+- 给支持 MCP 的 AI 助手提供受控的飞书 / Lark Docs 访问能力。
+- 将文档读取成 Markdown，用于总结、审阅、改写或结构化抽取。
+- 从 AI 生成的 Markdown 创建草稿文档。
+- 向已有文档追加章节、会议纪要、研究整理等内容。
+- 在文档评论区创建、列出、解决评论，用于审阅工作流。
+- 为个人或团队自托管一个内部 Remote MCP 文档连接器。
+
+## 暂时还不做什么
+
+- 它不是托管 SaaS，需要你自己部署。
+- 还没有完整的多租户用户管理后台。
+- 还没有完整的 skill-pack runtime。支持 skills 的实现计划已写入：`docs/plans/2026-06-09-skills-support-plan.md`。
+- 不会绕过飞书 / Lark 应用权限或文档共享规则；应用或用户 token 必须具备访问权限。
 
 ## 准备飞书 / Lark 应用
 
-1. 在飞书开放平台或 Lark 开放平台创建内部应用。
-2. 给应用开通文档读取和写入所需权限。
-3. 如果使用 tenant credential 模式，需要把目标文档或父文件夹共享给该应用。
+1. 在飞书开放平台或 Lark Developer Console 创建内部应用。
+2. 给应用开通所需的文档、云空间、评论和 OAuth 权限。
+3. 如果使用 app / tenant credential 模式，需要按需把目标文档或父文件夹共享给应用。
 4. 获取 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。
+5. 在确认权限前，保持 `FEISHU_DOC_WRITE_DRY_RUN_DEFAULT=true`。
 
 ## 本地构建与测试
 
@@ -69,125 +119,44 @@ go build ./cmd/feishu-doc-mcp-http-server
 go build ./cmd/feishu-doc-cli
 ```
 
-## 启动远程 HTTP MCP Server
-
-设置环境变量：
+如果环境使用项目本地 Go 工具链，可以先设置：
 
 ```bash
-export FEISHU_APP_ID="你的飞书 App ID"
-export FEISHU_APP_SECRET="你的飞书 App Secret"
-export MCP_SERVER_API_KEY="一个长随机字符串"
-export MCP_HTTP_ADDR=":8080"
+export PATH=/opt/data/tools/go/bin:$PATH
+go test ./...
 ```
 
-启动服务：
+## 启动远程 HTTP MCP Server
 
 ```bash
+export FEISHU_APP_ID="你的飞书 / Lark App ID"
+export FEISHU_APP_SECRET="你的飞书 / Lark App Secret"
+export MCP_SERVER_API_KEY="一个长随机字符串"
+export MCP_HTTP_ADDR=":8080"
 go run ./cmd/feishu-doc-mcp-http-server
 ```
 
-默认监听地址：
+部署时应放在 HTTPS 后面，然后在 MCP 客户端中配置：
 
 ```text
-:8080
-```
-
-HTTP 端点：
-
-| 端点 | 方法 | 说明 |
-| --- | --- | --- |
-| `/healthz` | `GET` | 健康检查。 |
-| `/mcp` | `POST` | JSON-RPC MCP 调用入口。 |
-| `/mcp` | `OPTIONS` | CORS 预检。 |
-
-如果设置了 `MCP_SERVER_API_KEY`，调用 `/mcp` 时需要带：
-
-```text
+MCP URL: https://your-domain.example/mcp
 Authorization: Bearer <MCP_SERVER_API_KEY>
 ```
 
-## 本地验证
-
-健康检查：
+## 本地 stdio MCP Server
 
 ```bash
-curl http://localhost:8080/healthz
+go run ./cmd/feishu-doc-mcp-server
 ```
 
-MCP ping：
+## 本地 CLI
 
 ```bash
-curl -s http://localhost:8080/mcp \
-  -H 'content-type: application/json' \
-  -H "authorization: Bearer $MCP_SERVER_API_KEY" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"ping"}'
-```
-
-列出工具：
-
-```bash
-curl -s http://localhost:8080/mcp \
-  -H 'content-type: application/json' \
-  -H "authorization: Bearer $MCP_SERVER_API_KEY" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-```
-
-## 使用 Docker 运行
-
-构建镜像：
-
-```bash
-docker build -t feishu-doc-mcp .
-```
-
-运行容器：
-
-```bash
-docker run -p 8080:8080 \
-  -e FEISHU_APP_ID="你的飞书 App ID" \
-  -e FEISHU_APP_SECRET="你的飞书 App Secret" \
-  -e MCP_SERVER_API_KEY="一个长随机字符串" \
-  -e MCP_HTTP_ADDR=":8080" \
-  feishu-doc-mcp
-```
-
-## 部署给 GPT / Web MCP 客户端使用
-
-ChatGPT 网页端或其他 Web MCP 客户端通常不能访问你的本地 `localhost:8080`。
-
-你需要把服务部署到公网，并放在 HTTPS 后面，例如：
-
-```text
-https://feishu-mcp.example.com/mcp
-```
-
-在 GPT / Web MCP 客户端中配置：
-
-```text
-MCP URL: https://feishu-mcp.example.com/mcp
-Authorization: Bearer <MCP_SERVER_API_KEY>
-```
-
-## 写入行为
-
-写入工具默认是 dry-run，即默认不真正修改飞书文档。
-
-要执行真实写入，需要满足：
-
-1. 飞书 / Lark 应用具备文档读写权限。
-2. 目标文档或父文件夹已共享给应用。
-3. 设置：
-
-```bash
-export FEISHU_DOC_WRITE_DRY_RUN_DEFAULT=false
-```
-
-或者在工具调用参数里显式传：
-
-```json
-{
-  "dryRun": false
-}
+go run ./cmd/feishu-doc-cli resolve "https://..."
+go run ./cmd/feishu-doc-cli metadata "https://..."
+go run ./cmd/feishu-doc-cli read "https://..."
+go run ./cmd/feishu-doc-cli create "New title" "# Hello"
+go run ./cmd/feishu-doc-cli append "https://..." "## Added from CLI"
 ```
 
 ## 示例：读取文档
@@ -202,6 +171,19 @@ export FEISHU_DOC_WRITE_DRY_RUN_DEFAULT=false
 }
 ```
 
+## 示例：创建文档
+
+```json
+{
+  "name": "feishu_doc_create",
+  "arguments": {
+    "title": "AI 生成的文档",
+    "markdown": "# 标题\n\n这是通过 MCP 创建的飞书文档。",
+    "dryRun": false
+  }
+}
+```
+
 ## 示例：追加内容
 
 ```json
@@ -209,20 +191,20 @@ export FEISHU_DOC_WRITE_DRY_RUN_DEFAULT=false
   "name": "feishu_doc_append",
   "arguments": {
     "input": "https://example.feishu.cn/docx/xxxx",
-    "markdown": "## 来自 ChatGPT 的追加内容\n\n这是一段通过 MCP 写入的内容。",
+    "markdown": "## 追加内容\n\n这是一段通过 MCP 写入的内容。",
     "dryRun": false
   }
 }
 ```
 
-## 示例：创建文档
+## 示例：创建评论
 
 ```json
 {
-  "name": "feishu_doc_create",
+  "name": "feishu_doc_create_comment",
   "arguments": {
-    "title": "ChatGPT 生成的文档",
-    "markdown": "# 标题\n\n这是通过 MCP 创建的飞书文档。",
+    "input": "https://example.feishu.cn/docx/xxxx",
+    "content": "这里需要补充依据。",
     "dryRun": false
   }
 }
@@ -233,27 +215,42 @@ export FEISHU_DOC_WRITE_DRY_RUN_DEFAULT=false
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `MCP_HTTP_ADDR` | `:8080` | 远程 MCP HTTP server 监听地址。 |
-| `MCP_SERVER_API_KEY` | 空 | `/mcp` 的可选 Bearer token。生产环境建议设置。 |
+| `MCP_SERVER_API_KEY` | 空 | `/mcp` 的 Bearer token；远程部署建议必须设置。 |
+| `MCP_ALLOW_UNAUTHENTICATED` | `false` | 是否允许无鉴权调用 `/mcp`；仅建议本地开发使用。 |
+| `MCP_ALLOWED_ORIGINS` | 空 | CORS origins，逗号分隔。 |
+| `MCP_MAX_BODY_BYTES` | `16777216` | 最大 HTTP 请求体大小。 |
+| `MCP_MAX_BATCH_REQUESTS` | `50` | 最大 JSON-RPC batch 数量。 |
 | `FEISHU_PROVIDER` | `feishu` | `feishu` 或 `lark`。 |
-| `FEISHU_BASE_URL` | 按 provider 自动设置 | 飞书 / Lark OpenAPI 基础地址。 |
+| `FEISHU_BASE_URL` | provider 默认值 | 飞书 / Lark OpenAPI 基础地址。 |
 | `FEISHU_APP_ID` | 空 | 飞书 / Lark 应用 ID。 |
 | `FEISHU_APP_SECRET` | 空 | 飞书 / Lark 应用密钥。 |
-| `FEISHU_TENANT_ACCESS_TOKEN` | 空 | 可选：直接使用预置 tenant access token。 |
-| `FEISHU_API_TIMEOUT_MS` | `15000` | API 请求超时时间。 |
-| `FEISHU_API_MAX_RETRIES` | `3` | 可重试请求的最大重试次数。 |
-| `FEISHU_DOC_MAX_BLOCKS` | `3000` | 单次读取文档的最大块数量。 |
-| `FEISHU_DOC_MAX_DEPTH` | `20` | 文档块递归读取最大深度。 |
-| `FEISHU_DOC_WRITE_DRY_RUN_DEFAULT` | `true` | 写入工具是否默认 dry-run。 |
+| `FEISHU_TENANT_ACCESS_TOKEN` | 空 | 可选：本地测试用的预置 tenant access token。 |
+| `FEISHU_DOC_WRITE_DRY_RUN_DEFAULT` | `true` | 写入/评论工具是否默认 dry-run。 |
+| `FEISHU_DOC_MAX_BLOCKS` | `3000` | 单次读取文档的最大 blocks 数。 |
+| `FEISHU_DOC_MAX_DEPTH` | `20` | 文档 block 递归读取最大深度。 |
+| `FEISHU_OAUTH_REDIRECT_URI` | 空 | 用户 OAuth 授权 URL 使用的 redirect URI。 |
+| `FEISHU_OAUTH_SCOPES` | 文档相关 scopes | 默认 OAuth scopes。 |
+| `FEISHU_TOKEN_STORE_PATH` | `.data/feishu_tokens.json` | 本地 token store 路径。 |
+| `FEISHU_TOKEN_ENCRYPT_KEY` | 空 | token store AES-GCM 加密 key。 |
+
+完整 endpoint 配置见 `.env.example`。
 
 ## 安全建议
 
 - 生产环境必须通过 HTTPS 暴露 `/mcp`。
-- 建议设置 `MCP_SERVER_API_KEY`，不要裸露 `/mcp`。
-- 不要把 `FEISHU_APP_SECRET` 提交到仓库。
-- 多用户生产环境建议使用飞书用户 OAuth，而不是共享 tenant token。
-- 写操作建议保留二次确认或审计日志。
+- 远程部署必须设置 `MCP_SERVER_API_KEY`。
+- 不要把 `FEISHU_APP_SECRET`、OAuth token store 或真实 access token 提交到仓库。
+- 权限未验证前，保持写入工具 dry-run。
+- 面向不可信远程客户端时，禁用调用方传入 credentialId。
+- 飞书 / Lark scopes 按最小权限配置。
+- 公开日志中应脱敏真实 document token、comment ID、app ID 和 user ID。
 
-## 进一步文档
+## 仓库
 
-- 远程 MCP 部署说明：`doc/chatgpt-remote-mcp-deploy.md`
-- 飞书文档模块 SDD：`doc/feishu-doc-module-sdd-spec.md`
+```bash
+git clone git@github.com:holtmiu/lark-docs-mcp.git
+```
+
+## License
+
+MIT

@@ -1,6 +1,6 @@
 # 飞书文档模块 SDD / 需求 Spec
 
-> Repository: `holtmiu/ChatGPT_MCP_Connectors`  
+> Repository: `holtmiu/lark-docs-mcp`  
 > Module: Feishu/Lark Document Connector  
 > Status: Draft  
 > Version: v0.1  

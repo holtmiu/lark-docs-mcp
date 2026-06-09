@@ -9,9 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/holtmiu/ChatGPT_MCP_Connectors/internal/config"
-	"github.com/holtmiu/ChatGPT_MCP_Connectors/internal/feishu"
-	"github.com/holtmiu/ChatGPT_MCP_Connectors/internal/mcp"
+	"github.com/holtmiu/lark-docs-mcp/internal/config"
+	"github.com/holtmiu/lark-docs-mcp/internal/feishu"
+	"github.com/holtmiu/lark-docs-mcp/internal/mcp"
 )
 
 const version = "0.2.0"

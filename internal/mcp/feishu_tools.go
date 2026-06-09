@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/holtmiu/ChatGPT_MCP_Connectors/internal/feishu"
+	"github.com/holtmiu/lark-docs-mcp/internal/feishu"
 )
 
 type FeishuTools struct {

@@ -12,7 +12,7 @@
 
 ## Current Baseline
 
-Repository: `/opt/data/workspace/github_repos/ChatGPT_MCP_Connectors`
+Repository: `/opt/data/workspace/github_repos/lark-docs-mcp`
 
 Observed baseline before this plan:
 
