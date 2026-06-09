@@ -28,6 +28,9 @@ type Config struct {
 	DocxChildrenPathTemplate       string
 	DocxAppendChildrenPathTemplate string
 	DocxPermissionPathTemplate     string
+	DocxCommentsPathTemplate       string
+	DocxCommentRepliesPathTemplate string
+	DocxCommentResolvePathTemplate string
 	DocxCreatePath                 string
 	MCPHTTPAddr                    string
 	MCPServerAPIKey                string
@@ -63,6 +66,9 @@ func Load() Config {
 		DocxChildrenPathTemplate:       getenv("FEISHU_DOCX_CHILDREN_PATH_TEMPLATE", "/open-apis/docx/v1/documents/%s/blocks/%s/children"),
 		DocxAppendChildrenPathTemplate: getenv("FEISHU_DOCX_APPEND_CHILDREN_PATH_TEMPLATE", "/open-apis/docx/v1/documents/%s/blocks/%s/children"),
 		DocxPermissionPathTemplate:     getenv("FEISHU_DOCX_PERMISSION_PATH_TEMPLATE", "/open-apis/drive/v1/permissions/%s/public?type=docx"),
+		DocxCommentsPathTemplate:       getenv("FEISHU_DOCX_COMMENTS_PATH_TEMPLATE", "/open-apis/drive/v1/files/%s/comments"),
+		DocxCommentRepliesPathTemplate: getenv("FEISHU_DOCX_COMMENT_REPLIES_PATH_TEMPLATE", "/open-apis/drive/v1/files/%s/comments/%s/replies"),
+		DocxCommentResolvePathTemplate: getenv("FEISHU_DOCX_COMMENT_RESOLVE_PATH_TEMPLATE", "/open-apis/drive/v1/files/%s/comments/%s"),
 		DocxCreatePath:                 getenv("FEISHU_DOCX_CREATE_PATH", "/open-apis/docx/v1/documents"),
 		MCPHTTPAddr:                    getenv("MCP_HTTP_ADDR", ":8080"),
 		MCPServerAPIKey:                os.Getenv("MCP_SERVER_API_KEY"),

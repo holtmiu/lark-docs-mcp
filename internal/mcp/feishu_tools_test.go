@@ -275,6 +275,115 @@ func TestReadToolSchemaIncludesCredentialID(t *testing.T) {
 	}
 }
 
+func TestToolsIncludesCommentToolsWithSchemas(t *testing.T) {
+	for _, name := range []string{"feishu_doc_list_comments", "feishu_doc_create_comment", "feishu_doc_reply_comment", "feishu_doc_resolve_comment"} {
+		tool := toolByName(t, name)
+		props := tool.InputSchema["properties"].(map[string]any)
+		if got := tool.InputSchema["additionalProperties"]; got != false {
+			t.Fatalf("%s additionalProperties = %#v, want false", name, got)
+		}
+		input := props["input"].(map[string]any)
+		if got := input["maxLength"]; got != 2048 {
+			t.Fatalf("%s input maxLength = %#v, want 2048", name, got)
+		}
+		credentialID := props["credentialId"].(map[string]any)
+		if got := credentialID["maxLength"]; got != 128 {
+			t.Fatalf("%s credentialId maxLength = %#v, want 128", name, got)
+		}
+		if strings.Contains(name, "create") || strings.Contains(name, "reply") {
+			content := props["content"].(map[string]any)
+			if got := content["maxLength"]; got != 20000 {
+				t.Fatalf("%s content maxLength = %#v, want 20000", name, got)
+			}
+			if got := content["minLength"]; got != 1 {
+				t.Fatalf("%s content minLength = %#v, want 1", name, got)
+			}
+		}
+		if strings.Contains(name, "reply") || strings.Contains(name, "resolve") {
+			commentID := props["commentId"].(map[string]any)
+			if got := commentID["maxLength"]; got != 256 {
+				t.Fatalf("%s commentId maxLength = %#v, want 256", name, got)
+			}
+		}
+	}
+}
+
+func TestResolveCommentToolRejectsMissingResolved(t *testing.T) {
+	tools := FeishuTools{Service: feishu.NewService(testOAuthToolConfig())}
+	_, err := tools.CallTool(context.Background(), "feishu_doc_resolve_comment", json.RawMessage([]byte(`{"input":"doc-token","commentId":"c-1"}`)))
+	if err == nil || !strings.Contains(err.Error(), "resolved is required") {
+		t.Fatalf("error = %v, want missing resolved validation error", err)
+	}
+}
+
+func TestCommentToolsCallHandlers(t *testing.T) {
+	var gotPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.EscapedPath())
+		switch r.URL.EscapedPath() {
+		case "/comments/doc-token":
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"items": []any{map[string]any{"comment_id": "c-1", "content": "hello"}}}})
+				return
+			}
+			if r.Method == http.MethodPost {
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"comment": map[string]any{"comment_id": "c-2", "content": "created"}}})
+				return
+			}
+		case "/comments/doc-token/c%2F1/replies":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"reply": map[string]any{"reply_id": "r-1", "content": "reply"}}})
+			return
+		case "/comments/doc-token/c%2F1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"comment": map[string]any{"comment_id": "c/1", "is_solved": true}}})
+			return
+		case "/permission/doc-token":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"can_read": true, "can_write": true, "can_comment": true}})
+			return
+		}
+		t.Fatalf("unexpected request %s %s", r.Method, r.URL.EscapedPath())
+	}))
+	defer server.Close()
+
+	svc := feishu.NewService(config.Config{Provider: "feishu", BaseURL: server.URL, TenantAccessToken: "tenant-token", WriteDryRunDefault: false, DocxCommentsPathTemplate: "/comments/%s", DocxCommentRepliesPathTemplate: "/comments/%s/%s/replies", DocxCommentResolvePathTemplate: "/comments/%s/%s", DocxPermissionPathTemplate: "/permission/%s"})
+	tools := FeishuTools{Service: svc}
+
+	listed, err := tools.CallTool(context.Background(), "feishu_doc_list_comments", json.RawMessage([]byte(`{"input":"doc-token","pageSize":10}`)))
+	if err != nil {
+		t.Fatalf("list comments returned error: %v", err)
+	}
+	if got := listed.(feishu.CommentListResult); len(got.Comments) != 1 || got.Comments[0].ID != "c-1" {
+		t.Fatalf("list result = %+v", got)
+	}
+
+	dryRun := false
+	args, _ := json.Marshal(map[string]any{"input": "doc-token", "content": "created", "dryRun": dryRun})
+	created, err := tools.CallTool(context.Background(), "feishu_doc_create_comment", args)
+	if err != nil {
+		t.Fatalf("create comment returned error: %v", err)
+	}
+	if got := created.(feishu.CommentWriteResult); got.CommentID != "c-2" {
+		t.Fatalf("create result = %+v", got)
+	}
+
+	args, _ = json.Marshal(map[string]any{"input": "doc-token", "commentId": "c/1", "content": "reply", "dryRun": dryRun})
+	replied, err := tools.CallTool(context.Background(), "feishu_doc_reply_comment", args)
+	if err != nil {
+		t.Fatalf("reply comment returned error: %v", err)
+	}
+	if got := replied.(feishu.CommentWriteResult); got.CommentID != "r-1" {
+		t.Fatalf("reply result = %+v", got)
+	}
+
+	args, _ = json.Marshal(map[string]any{"input": "doc-token", "commentId": "c/1", "resolved": true, "dryRun": dryRun})
+	resolved, err := tools.CallTool(context.Background(), "feishu_doc_resolve_comment", args)
+	if err != nil {
+		t.Fatalf("resolve comment returned error: %v", err)
+	}
+	if got := resolved.(feishu.CommentWriteResult); got.CommentID != "c/1" || !got.Comment.Resolved {
+		t.Fatalf("resolve result = %+v", got)
+	}
+}
+
 func testOAuthToolConfig() config.Config {
 	return config.Config{
 		Provider:           "feishu",

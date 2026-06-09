@@ -126,6 +126,58 @@ type AppendRequest struct {
 	OperationID  string            `json:"operationId,omitempty"`
 }
 
+type Comment struct {
+	ID          string `json:"id"`
+	Content     string `json:"content"`
+	AuthorID    string `json:"authorId,omitempty"`
+	CreatedTime string `json:"createdTime,omitempty"`
+	UpdatedTime string `json:"updatedTime,omitempty"`
+	Resolved    bool   `json:"resolved,omitempty"`
+	Quote       string `json:"quote,omitempty"`
+}
+
+type CommentListResult struct {
+	DocumentID string    `json:"documentId"`
+	Comments   []Comment `json:"comments"`
+	HasMore    bool      `json:"hasMore,omitempty"`
+	PageToken  string    `json:"pageToken,omitempty"`
+}
+
+type ListCommentsRequest struct {
+	PageSize  int    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+}
+
+type CreateCommentRequest struct {
+	Content     string `json:"content"`
+	BlockID     string `json:"blockId,omitempty"`
+	Quote       string `json:"quote,omitempty"`
+	DryRun      *bool  `json:"dryRun,omitempty"`
+	OperationID string `json:"operationId,omitempty"`
+}
+
+type ReplyCommentRequest struct {
+	Content     string `json:"content"`
+	DryRun      *bool  `json:"dryRun,omitempty"`
+	OperationID string `json:"operationId,omitempty"`
+}
+
+type ResolveCommentRequest struct {
+	Resolved    bool   `json:"resolved"`
+	DryRun      *bool  `json:"dryRun,omitempty"`
+	OperationID string `json:"operationId,omitempty"`
+}
+
+type CommentWriteResult struct {
+	OperationID string         `json:"operationId"`
+	DocumentID  string         `json:"documentId"`
+	CommentID   string         `json:"commentId,omitempty"`
+	Comment     Comment        `json:"comment,omitempty"`
+	DryRun      bool           `json:"dryRun"`
+	Request     map[string]any `json:"request,omitempty"`
+	Warnings    []string       `json:"warnings,omitempty"`
+}
+
 type DocumentWriteResult struct {
 	OperationID   string         `json:"operationId"`
 	DocumentID    string         `json:"documentId"`

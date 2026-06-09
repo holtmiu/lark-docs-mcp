@@ -24,6 +24,8 @@ func (t FeishuTools) Tools() []Tool {
 	intProp := map[string]any{"type": "integer", "minimum": 1}
 	formatProp := map[string]any{"type": "string", "enum": []string{"json", "markdown", "both"}}
 	inputProp := map[string]any{"type": "string", "maxLength": 2048}
+	contentProp := map[string]any{"type": "string", "minLength": 1, "maxLength": 20000}
+	commentIDProp := map[string]any{"type": "string", "maxLength": 256}
 	return []Tool{
 		{
 			Name:        "feishu_oauth_auth_url",
@@ -59,6 +61,26 @@ func (t FeishuTools) Tools() []Tool {
 			Name:        "feishu_doc_append",
 			Description: "Append Markdown content to a Feishu/Lark docx document. Dry-run is enabled by default unless dryRun=false or server default is changed.",
 			InputSchema: objectSchema(map[string]any{"input": stringProp, "credentialId": credentialIDProp, "markdown": stringProp, "afterBlockId": stringProp, "dryRun": boolProp, "operationId": stringProp}, []string{"input", "markdown"}),
+		},
+		{
+			Name:        "feishu_doc_list_comments",
+			Description: "List Feishu/Lark document comments with optional pagination.",
+			InputSchema: objectSchema(map[string]any{"input": inputProp, "credentialId": credentialIDProp, "pageSize": intProp, "pageToken": stringProp}, []string{"input"}),
+		},
+		{
+			Name:        "feishu_doc_create_comment",
+			Description: "Create a Feishu/Lark document comment. Dry-run is enabled by default unless dryRun=false or server default is changed.",
+			InputSchema: objectSchema(map[string]any{"input": inputProp, "credentialId": credentialIDProp, "content": contentProp, "blockId": stringProp, "quote": stringProp, "dryRun": boolProp, "operationId": stringProp}, []string{"input", "content"}),
+		},
+		{
+			Name:        "feishu_doc_reply_comment",
+			Description: "Reply to a Feishu/Lark document comment. Dry-run is enabled by default unless dryRun=false or server default is changed.",
+			InputSchema: objectSchema(map[string]any{"input": inputProp, "credentialId": credentialIDProp, "commentId": commentIDProp, "content": contentProp, "dryRun": boolProp, "operationId": stringProp}, []string{"input", "commentId", "content"}),
+		},
+		{
+			Name:        "feishu_doc_resolve_comment",
+			Description: "Resolve or reopen a Feishu/Lark document comment. Dry-run is enabled by default unless dryRun=false or server default is changed.",
+			InputSchema: objectSchema(map[string]any{"input": inputProp, "credentialId": credentialIDProp, "commentId": commentIDProp, "resolved": boolProp, "dryRun": boolProp, "operationId": stringProp}, []string{"input", "commentId", "resolved"}),
 		},
 	}
 }
@@ -172,6 +194,90 @@ func (t FeishuTools) CallTool(ctx context.Context, name string, args json.RawMes
 			return nil, err
 		}
 		return t.Service.AppendDocumentWithActor(ctx, req.Input, feishu.AppendRequest{Markdown: req.Markdown, AfterBlockID: req.AfterBlockID, DryRun: req.DryRun, OperationID: req.OperationID}, feishu.ActorContext{CredentialID: req.CredentialID})
+	case "feishu_doc_list_comments":
+		var req struct {
+			Input        string `json:"input"`
+			CredentialID string `json:"credentialId,omitempty"`
+			PageSize     int    `json:"pageSize,omitempty"`
+			PageToken    string `json:"pageToken,omitempty"`
+		}
+		if err := decodeArgs(args, &req); err != nil {
+			return nil, err
+		}
+		if err := validateDocumentInput(req.Input); err != nil {
+			return nil, err
+		}
+		if err := validateCredentialID(req.CredentialID); err != nil {
+			return nil, err
+		}
+		return t.Service.ListComments(ctx, req.Input, feishu.ListCommentsRequest{PageSize: req.PageSize, PageToken: req.PageToken}, feishu.ActorContext{CredentialID: req.CredentialID})
+	case "feishu_doc_create_comment":
+		var req struct {
+			Input        string `json:"input"`
+			CredentialID string `json:"credentialId,omitempty"`
+			Content      string `json:"content"`
+			BlockID      string `json:"blockId,omitempty"`
+			Quote        string `json:"quote,omitempty"`
+			DryRun       *bool  `json:"dryRun,omitempty"`
+			OperationID  string `json:"operationId,omitempty"`
+		}
+		if err := decodeArgs(args, &req); err != nil {
+			return nil, err
+		}
+		if err := validateDocumentInput(req.Input); err != nil {
+			return nil, err
+		}
+		if err := validateCredentialID(req.CredentialID); err != nil {
+			return nil, err
+		}
+		return t.Service.CreateComment(ctx, req.Input, feishu.CreateCommentRequest{Content: req.Content, BlockID: req.BlockID, Quote: req.Quote, DryRun: req.DryRun, OperationID: req.OperationID}, feishu.ActorContext{CredentialID: req.CredentialID})
+	case "feishu_doc_reply_comment":
+		var req struct {
+			Input        string `json:"input"`
+			CredentialID string `json:"credentialId,omitempty"`
+			CommentID    string `json:"commentId"`
+			Content      string `json:"content"`
+			DryRun       *bool  `json:"dryRun,omitempty"`
+			OperationID  string `json:"operationId,omitempty"`
+		}
+		if err := decodeArgs(args, &req); err != nil {
+			return nil, err
+		}
+		if err := validateDocumentInput(req.Input); err != nil {
+			return nil, err
+		}
+		if err := validateCredentialID(req.CredentialID); err != nil {
+			return nil, err
+		}
+		if len(req.CommentID) > 256 {
+			return nil, fmt.Errorf("commentId exceeds max length 256")
+		}
+		return t.Service.ReplyComment(ctx, req.Input, req.CommentID, feishu.ReplyCommentRequest{Content: req.Content, DryRun: req.DryRun, OperationID: req.OperationID}, feishu.ActorContext{CredentialID: req.CredentialID})
+	case "feishu_doc_resolve_comment":
+		var req struct {
+			Input        string `json:"input"`
+			CredentialID string `json:"credentialId,omitempty"`
+			CommentID    string `json:"commentId"`
+			Resolved     *bool  `json:"resolved"`
+			DryRun       *bool  `json:"dryRun,omitempty"`
+			OperationID  string `json:"operationId,omitempty"`
+		}
+		if err := decodeArgs(args, &req); err != nil {
+			return nil, err
+		}
+		if err := validateDocumentInput(req.Input); err != nil {
+			return nil, err
+		}
+		if err := validateCredentialID(req.CredentialID); err != nil {
+			return nil, err
+		}
+		if len(req.CommentID) > 256 {
+			return nil, fmt.Errorf("commentId exceeds max length 256")
+		}
+		if req.Resolved == nil {
+			return nil, fmt.Errorf("resolved is required")
+		}
+		return t.Service.ResolveComment(ctx, req.Input, req.CommentID, feishu.ResolveCommentRequest{Resolved: *req.Resolved, DryRun: req.DryRun, OperationID: req.OperationID}, feishu.ActorContext{CredentialID: req.CredentialID})
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -195,6 +301,13 @@ func decodeArgs(raw json.RawMessage, out any) error {
 func validateCredentialID(value string) error {
 	if len(value) > 128 {
 		return fmt.Errorf("credentialId exceeds max length 128")
+	}
+	return nil
+}
+
+func validateDocumentInput(value string) error {
+	if len(value) > 2048 {
+		return fmt.Errorf("input exceeds max length 2048")
 	}
 	return nil
 }
